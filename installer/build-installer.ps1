@@ -19,6 +19,14 @@ Write-Host "==========================================================" -Foregro
 Write-Host "  Building HID Keyboard Layout Remapper Installers" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
+# Ensure license RTF files exist
+$LicenseGenScript = Join-Path $PSScriptRoot "gen_license.ps1"
+if (-not (Test-Path (Join-Path $PSScriptRoot "license-ja.rtf"))) {
+    if (Test-Path $LicenseGenScript) {
+        & powershell -ExecutionPolicy Bypass -File $LicenseGenScript | Out-Null
+    }
+}
+
 # 1. Verify release executable exists
 $ReleaseExe = Join-Path $WorkspaceRoot "target\release\hid-remap.exe"
 if (-not (Test-Path $ReleaseExe)) {

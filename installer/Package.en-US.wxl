@@ -1,5 +1,5 @@
 <WixLocalization xmlns="http://wixtoolset.org/schemas/v4/wxl" Culture="en-US">
     <String Id="DowngradeErrorMessage" Value="A newer version of HID Keyboard Layout Remapper is already installed." />
     <String Id="LaunchAppOnFinish" Value="Launch HID Keyboard Layout Remapper now" />
+    <String Id="LicenseRtfPath" Value="installer\license-en.rtf" />
 </WixLocalization>
-

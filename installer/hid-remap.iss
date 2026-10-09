@@ -37,6 +37,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+LicenseFile=..\LICENSE
 
 ; Mutex check to prevent running/modifying while active
 AppMutex=Local\HIDKeyboardLayoutRemapperSingleInstanceMutex,HIDKeyboardLayoutRemapperSingleInstanceMutex
@@ -64,6 +65,7 @@ Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignorevers
 Source: "..\config.toml"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "..\crates\hid-remap-app\ui\assets\app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; DestName: "README.md"
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; DestName: "LICENSE"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"

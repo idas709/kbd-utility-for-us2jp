@@ -16,6 +16,7 @@
 
         <!-- Advanced UI allowing user to choose All Users vs Current User -->
         <ui:WixUI Id="WixUI_Advanced" />
+        <WixVariable Id="WixUILicenseRtf" Value="!(loc.LicenseRtfPath)" />
         <Property Id="ApplicationFolderName" Value="HID Keyboard Layout Remapper" />
         <Property Id="WixAppFolder" Value="WixPerMachineFolder" />
 
@@ -63,6 +64,10 @@
                     <File Id="ReadmeMd" Source="README.md" KeyPath="yes" />
                 </Component>
 
+                <Component Id="LicenseFile" Guid="*">
+                    <File Id="LicenseTxt" Source="LICENSE" KeyPath="yes" />
+                </Component>
+
                 <Component Id="StartupRegistry" Guid="8B321D50-0A16-417A-B962-E9C59B7F1D03">
                     <RegistryValue Root="HKMU"
                                    Key="Software\Microsoft\Windows\CurrentVersion\Run"
@@ -82,6 +87,7 @@
             <ComponentRef Id="ConfigFile" />
             <ComponentRef Id="AppIconFile" />
             <ComponentRef Id="ReadmeFile" />
+            <ComponentRef Id="LicenseFile" />
             <ComponentRef Id="StartupRegistry" />
         </Feature>
     </Package>
