@@ -109,6 +109,8 @@ pub struct DriverClient {
     handle: HANDLE,
 }
 
+unsafe impl Send for DriverClient {}
+
 impl DriverClient {
     /// Attempt to connect to the KMDF driver's control device.
     pub fn connect() -> Result<Self, DriverError> {

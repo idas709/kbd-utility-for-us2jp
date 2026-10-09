@@ -1,0 +1,20 @@
+[package]
+name = "hid-remap-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "User Session Agent for IME switching and background input coordination"
+
+[dependencies]
+hid-remap-core = { path = "../hid-remap-core" }
+hid-remap-device = { path = "../hid-remap-device" }
+hid-remap-ime = { path = "../hid-remap-ime" }
+hid-remap-service = { path = "../hid-remap-service" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+] }

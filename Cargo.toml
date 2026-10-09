@@ -5,6 +5,7 @@ members = [
     "crates/hid-remap-device",
     "crates/hid-remap-ime",
     "crates/hid-remap-service",
+    "crates/hid-remap-agent",
     "crates/hid-remap-cli",
 ]
 
