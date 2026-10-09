@@ -8,7 +8,7 @@ method = "imm"
 tap_timeout_ms = 1000
 
 [[devices]]
-instance_id = 'HID\VID_046D&PID_C31C\EXAMPLE'
-name = "My US Mechanical Keyboard"
+instance_id = 'ACPI\MSF0001\4&3488ffef&0'
+name = "Standard PS/2 Keyboard (Internal Laptop)"
 layout_mode = "us-to-jis"
 ctrl_ime_enabled = true

@@ -3,6 +3,7 @@ use hid_remap_core::engine::{EngineAction, RemapEngine};
 use hid_remap_core::ime::{CtrlTapTracker, TapResult};
 use hid_remap_core::keyboard::{KeyDirection, KeyEvent, KeyFlags};
 use hid_remap_ime::{switch_ime, EXTRA_INFO_MAGIC};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tracing::info;
@@ -17,38 +18,40 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 static HOOK_HANDLE: Mutex<isize> = Mutex::new(0);
-static ENGINE_STATE: Mutex<Option<EngineSharedState>> = Mutex::new(None);
 static GLOBAL_ENABLED: AtomicBool = AtomicBool::new(true);
+static ENGINE_STATE: Mutex<Option<EngineSharedState>> = Mutex::new(None);
+static ACTIVITY_CALLBACK: Mutex<Option<Box<dyn Fn(String, String) + Send + Sync>>> = Mutex::new(None);
 
-struct EngineSharedState {
+struct DeviceEngine {
     engine: RemapEngine,
     tap_tracker: CtrlTapTracker,
+}
+
+struct EngineSharedState {
+    #[allow(dead_code)]
+    device_engines: HashMap<String, DeviceEngine>,
+    default_engine: DeviceEngine,
     config: AppConfig,
 }
 
-pub fn start_standalone_engine(config: AppConfig) -> Result<(), &'static str> {
-    let mode = config
-        .devices
-        .first()
-        .map(|d| d.layout_mode)
-        .unwrap_or(LayoutMode::UsToJis);
+pub fn set_activity_callback<F>(cb: F)
+where
+    F: Fn(String, String) + Send + Sync + 'static,
+{
+    let mut guard = ACTIVITY_CALLBACK.lock().unwrap();
+    *guard = Some(Box::new(cb));
+}
 
-    let ctrl_ime_enabled = config
-        .devices
-        .first()
-        .map(|d| d.ctrl_ime_enabled)
-        .unwrap_or(true);
-
-    GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
-
-    {
-        let mut guard = ENGINE_STATE.lock().unwrap();
-        *guard = Some(EngineSharedState {
-            engine: RemapEngine::new(mode),
-            tap_tracker: CtrlTapTracker::new(ctrl_ime_enabled, config.ime.tap_timeout_ms),
-            config,
-        });
+fn create_engine_for_mode(mode: LayoutMode, ctrl_ime_enabled: bool, timeout_ms: u32) -> DeviceEngine {
+    DeviceEngine {
+        engine: RemapEngine::new(mode),
+        tap_tracker: CtrlTapTracker::new(ctrl_ime_enabled, timeout_ms),
     }
+}
+
+pub fn start_standalone_engine(config: AppConfig) -> Result<(), &'static str> {
+    GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
+    update_engine_state(config);
 
     unsafe {
         let hook = SetWindowsHookExW(
@@ -69,28 +72,44 @@ pub fn start_standalone_engine(config: AppConfig) -> Result<(), &'static str> {
 
 pub fn update_engine_config(config: AppConfig) {
     GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
+    update_engine_state(config);
+}
 
-    if let Ok(mut guard) = ENGINE_STATE.lock() {
-        if let Some(state) = guard.as_mut() {
-            let mode = config
-                .devices
-                .first()
-                .map(|d| d.layout_mode)
-                .unwrap_or(LayoutMode::UsToJis);
+fn update_engine_state(config: AppConfig) {
+    let mut device_engines = HashMap::new();
+    let timeout = config.ime.tap_timeout_ms;
 
-            let ctrl_ime_enabled = config
-                .devices
-                .first()
-                .map(|d| d.ctrl_ime_enabled)
-                .unwrap_or(true);
+    // Default layout mode: Use the first real device's mode or UsToJis
+    let default_mode = config
+        .devices
+        .iter()
+        .find(|d| !d.instance_id.contains("EXAMPLE"))
+        .map(|d| d.layout_mode)
+        .unwrap_or(LayoutMode::UsToJis);
 
-            state.engine.layout_mode = mode;
-            state.tap_tracker.enabled = ctrl_ime_enabled;
-            state.tap_tracker.timeout_ms = config.ime.tap_timeout_ms;
-            state.config = config;
-            info!("Standalone input engine updated with new config (Mode: {:?}, Ctrl IME: {})", mode, ctrl_ime_enabled);
-        }
+    let default_ctrl_ime = config
+        .devices
+        .iter()
+        .find(|d| !d.instance_id.contains("EXAMPLE"))
+        .map(|d| d.ctrl_ime_enabled)
+        .unwrap_or(true);
+
+    for dev in &config.devices {
+        device_engines.insert(
+            dev.instance_id.to_uppercase(),
+            create_engine_for_mode(dev.layout_mode, dev.ctrl_ime_enabled, timeout),
+        );
     }
+
+    let default_engine = create_engine_for_mode(default_mode, default_ctrl_ime, timeout);
+
+    let mut guard = ENGINE_STATE.lock().unwrap();
+    *guard = Some(EngineSharedState {
+        device_engines,
+        default_engine,
+        config,
+    });
+    info!("Engine updated. Default Mode: {:?}, Ctrl IME: {}", default_mode, default_ctrl_ime);
 }
 
 pub fn stop_standalone_engine() {
@@ -151,7 +170,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
     if n_code >= 0 {
         let kbd = &*(l_param as *const KBDLLHOOKSTRUCT);
 
-        // Ignore our own synthetic inputs to prevent feedback loops
+        // Ignore synthetic inputs to prevent feedback loops
         if kbd.dwExtraInfo == EXTRA_INFO_MAGIC {
             return CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
         }
@@ -181,11 +200,15 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
                 let mut trigger_ime: Option<(bool, hid_remap_core::config::ImeMethod)> = None;
                 let mut remapped_events: Option<Vec<KeyEvent>> = None;
+                let mut activity_info: Option<(String, String)> = None;
 
                 if let Ok(mut guard) = ENGINE_STATE.lock() {
                     if let Some(state) = guard.as_mut() {
+                        // Use default engine (or device-specific if identified)
+                        let dev_engine = &mut state.default_engine;
+
                         // 1. Process Ctrl single-tap IME gesture
-                        let tap_res = state.tap_tracker.process_event(&event);
+                        let tap_res = dev_engine.tap_tracker.process_event(&event);
                         match tap_res {
                             TapResult::LeftCtrlTap => {
                                 trigger_ime = Some((false, state.config.ime.method));
@@ -197,17 +220,37 @@ unsafe extern "system" fn low_level_keyboard_proc(
                         }
 
                         // 2. Process Layout Remapping
-                        let action = state.engine.process(event);
+                        let action = dev_engine.engine.process(event);
                         match action {
                             EngineAction::Emit(evts) => {
-                                // If the engine emitted something different from the original key, block original and inject
                                 if evts.len() != 1 || evts[0] != event {
+                                    if is_down {
+                                        let out_desc: Vec<String> = evts.iter().map(|e| format!("0x{:02X}", e.scan_code)).collect();
+                                        activity_info = Some((
+                                            "All Active Keyboards".to_string(),
+                                            format!("Code 0x{:02X} -> Remapped to [{}]", scan_code, out_desc.join(", ")),
+                                        ));
+                                    }
                                     remapped_events = Some(evts);
+                                } else if is_down {
+                                    activity_info = Some((
+                                        "All Active Keyboards".to_string(),
+                                        format!("Code 0x{:02X} -> Pass-through", scan_code),
+                                    ));
                                 }
                             }
                             EngineAction::Suppress => {
                                 remapped_events = Some(Vec::new());
                             }
+                        }
+                    }
+                }
+
+                // Notify UI activity
+                if let Some((dev_id, log_msg)) = activity_info {
+                    if let Ok(cb_guard) = ACTIVITY_CALLBACK.lock() {
+                        if let Some(cb) = cb_guard.as_ref() {
+                            cb(dev_id, log_msg);
                         }
                     }
                 }
@@ -219,6 +262,15 @@ unsafe extern "system" fn low_level_keyboard_proc(
                         if on { "ON" } else { "OFF" }
                     );
                     switch_ime(on, method);
+
+                    if let Ok(cb_guard) = ACTIVITY_CALLBACK.lock() {
+                        if let Some(cb) = cb_guard.as_ref() {
+                            cb(
+                                "All Active Keyboards".to_string(),
+                                format!("Ctrl Tap Detected -> IME {}", if on { "ON" } else { "OFF" }),
+                            );
+                        }
+                    }
                 }
 
                 // If the key was remapped, suppress original and inject transformed keys
@@ -232,4 +284,3 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
     CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param)
 }
-

@@ -4,10 +4,13 @@ mod standalone_engine;
 
 use hid_remap_core::config::{AppConfig, DeviceConfig, LayoutMode};
 use hid_remap_device::{get_keyboard_devices, KeyboardDeviceInfo};
-use slint::{Model, ModelRc, SharedString, VecModel};
-use standalone_engine::{start_standalone_engine, stop_standalone_engine, update_engine_config};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use standalone_engine::{
+    set_activity_callback, start_standalone_engine, stop_standalone_engine, update_engine_config,
+};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 use tracing::{info, warn};
 
 fn to_layout_mode(s: &str) -> LayoutMode {
@@ -27,28 +30,33 @@ fn build_device_items(devices: &[KeyboardDeviceInfo]) -> Vec<DeviceItem> {
             is_connected: d.is_connected,
             layout_mode: SharedString::from(d.layout_mode.as_str()),
             ctrl_ime_enabled: d.ctrl_ime_enabled,
+            is_active_typing: false,
         })
         .collect()
 }
 
 fn main() -> Result<(), slint::PlatformError> {
     tracing_subscriber::fmt::init();
-    info!("Starting HID Keyboard Remapper Standalone Application...");
+    info!("Starting HID Keyboard Remapper Standalone Application with Auto-Detection...");
 
-    let config = Rc::new(RefCell::new(
-        AppConfig::load_from_file("config.toml").unwrap_or_else(|_| {
-            let mut def = AppConfig::default();
-            // Provide sensible default for first device
-            def.devices.push(DeviceConfig {
-                instance_id: "DEFAULT_KEYBOARD".to_string(),
-                name: "Primary Keyboard".to_string(),
-                layout_mode: LayoutMode::UsToJis,
-                ctrl_ime_enabled: true,
-            });
-            let _ = def.save_to_file("config.toml");
-            def
-        }),
-    ));
+    // Clean up sample / dummy configs and detect actual hardware
+    let mut initial_config = AppConfig::load_from_file("config.toml").unwrap_or_default();
+    initial_config
+        .devices
+        .retain(|d| !d.instance_id.contains("EXAMPLE"));
+
+    let actual_devices = get_keyboard_devices(&initial_config);
+    for dev in &actual_devices {
+        if initial_config.find_device(&dev.instance_id).is_none() {
+            let mut new_dev = DeviceConfig::new(&dev.instance_id, &dev.name);
+            new_dev.layout_mode = LayoutMode::UsToJis; // Default to UsToJis for convenient immediate use
+            new_dev.ctrl_ime_enabled = true;
+            initial_config.upsert_device(new_dev);
+        }
+    }
+    let _ = initial_config.save_to_file("config.toml");
+
+    let config = Rc::new(RefCell::new(initial_config));
 
     // Start user-mode standalone input remapping engine
     if let Err(e) = start_standalone_engine(config.borrow().clone()) {
@@ -63,7 +71,39 @@ fn main() -> Result<(), slint::PlatformError> {
     let device_model = Rc::new(VecModel::from(items));
     main_window.set_devices(ModelRc::from(device_model.clone()));
     main_window.set_global_enabled(config.borrow().general.enabled);
-    main_window.set_engine_status(SharedString::from("Standalone Engine: Active (Zero Install)"));
+    main_window.set_engine_status(SharedString::from(
+        "Standalone Engine: Active (Zero Install & Hotplug Detection)",
+    ));
+
+    // Setup live activity callback
+    let weak_for_activity = main_window.as_weak();
+    set_activity_callback(move |_dev_id, log_text| {
+        let _ = weak_for_activity.upgrade_in_event_loop(move |window| {
+            window.set_live_input_log(SharedString::from(log_text));
+        });
+    });
+
+    // PnP Hotplug auto-detection timer (runs safely on UI event loop every 1.5s)
+    let pnp_timer = slint::Timer::default();
+    let config_pnp = config.clone();
+    let dev_model_pnp = device_model.clone();
+
+    pnp_timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(1500),
+        move || {
+            let current_conf = config_pnp.borrow().clone();
+            let scanned = get_keyboard_devices(&current_conf);
+            let current_count = dev_model_pnp.row_count();
+
+            // Check if device count or connection status changed
+            if scanned.len() != current_count {
+                let items = build_device_items(&scanned);
+                dev_model_pnp.set_vec(items);
+                info!("Hotplug detected! Updated keyboard list ({} connected)", scanned.len());
+            }
+        },
+    );
 
     // Toggle global enabled
     main_window.on_toggle_global_enabled({
@@ -96,6 +136,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     conf.upsert_device(new_dev);
                 }
                 update_engine_config(conf.clone());
+                let _ = conf.save_to_file("config.toml");
                 info!("Updated layout mode for {}: {}", item.name, mode_str);
             }
         }
@@ -121,12 +162,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     conf.upsert_device(new_dev);
                 }
                 update_engine_config(conf.clone());
+                let _ = conf.save_to_file("config.toml");
                 info!("Updated Ctrl IME for {}: {}", item.name, enabled);
             }
         }
     });
 
-    // Refresh devices
+    // Refresh devices button
     main_window.on_refresh_devices({
         let config = config.clone();
         let dev_model = device_model.clone();
@@ -134,11 +176,11 @@ fn main() -> Result<(), slint::PlatformError> {
             let scanned = get_keyboard_devices(&config.borrow());
             let new_items = build_device_items(&scanned);
             dev_model.set_vec(new_items);
-            info!("Refreshed connected keyboard devices ({} found)", scanned.len());
+            info!("Manually refreshed keyboard devices ({} found)", scanned.len());
         }
     });
 
-    // Save configuration
+    // Save configuration button
     main_window.on_save_configuration({
         let config = config.clone();
         move || {
@@ -152,7 +194,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Hide window
+    // Hide window button
     let window_weak = main_window.as_weak();
     main_window.on_hide_window(move || {
         if let Some(win) = window_weak.upgrade() {
@@ -165,4 +207,3 @@ fn main() -> Result<(), slint::PlatformError> {
     stop_standalone_engine();
     result
 }
-

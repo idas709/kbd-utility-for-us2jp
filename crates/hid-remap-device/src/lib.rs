@@ -1,8 +1,11 @@
 use hid_remap_core::config::{AppConfig, LayoutMode};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::ptr;
+use windows_sys::Win32::System::Registry::{
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_READ,
+};
 use windows_sys::Win32::UI::Input::{
     GetRawInputDeviceInfoW, GetRawInputDeviceList, RAWINPUTDEVICELIST, RIDI_DEVICENAME,
     RIM_TYPEKEYBOARD,
@@ -68,10 +71,89 @@ pub fn device_path_to_instance_id(device_path: &str) -> String {
     without_guid.replace('#', r"\")
 }
 
-/// Friendly default name generator from VID/PID and instance ID.
-fn generate_device_name(instance_id: &str, vid: Option<u16>, pid: Option<u16>) -> String {
+/// Query human-readable Device Description or FriendlyName from Windows Enum registry.
+pub fn get_device_description_from_registry(instance_id: &str) -> Option<String> {
+    let subkey = format!(r"SYSTEM\CurrentControlSet\Enum\{}", instance_id);
+    let wide_key: Vec<u16> = std::ffi::OsStr::new(&subkey)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let mut hkey = std::mem::zeroed();
+        let status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, wide_key.as_ptr(), 0, KEY_READ, &mut hkey);
+        if status != 0 {
+            return None;
+        }
+
+        let read_string_val = |val_name: &str| -> Option<String> {
+            let wide_val: Vec<u16> = std::ffi::OsStr::new(val_name)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut val_type = 0;
+            let mut byte_len = 0;
+
+            let query_res = RegQueryValueExW(
+                hkey,
+                wide_val.as_ptr(),
+                ptr::null_mut(),
+                &mut val_type,
+                ptr::null_mut(),
+                &mut byte_len,
+            );
+
+            if query_res == 0 && byte_len > 0 {
+                let mut buf: Vec<u16> = vec![0; (byte_len / 2) as usize + 1];
+                let query_val = RegQueryValueExW(
+                    hkey,
+                    wide_val.as_ptr(),
+                    ptr::null_mut(),
+                    &mut val_type,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut byte_len,
+                );
+
+                if query_val == 0 {
+                    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                    let s = String::from_utf16_lossy(&buf[..len]);
+                    // Parse localized string format: "@keyboard.inf,%hid.keyboarddevice%;HID Keyboard Device"
+                    if let Some(semicolon) = s.rfind(';') {
+                        return Some(s[semicolon + 1..].trim().to_string());
+                    }
+                    return Some(s.trim().to_string());
+                }
+            }
+            None
+        };
+
+        // Try FriendlyName first, then DeviceDesc
+        let name = read_string_val("FriendlyName").or_else(|| read_string_val("DeviceDesc"));
+        RegCloseKey(hkey);
+        name
+    }
+}
+
+/// Friendly default name generator from VID/PID, registry, and instance ID.
+pub fn generate_device_name(instance_id: &str, vid: Option<u16>, pid: Option<u16>) -> String {
+    // 1. Try registry description
+    if let Some(desc) = get_device_description_from_registry(instance_id) {
+        if !desc.is_empty() {
+            if let (Some(v), Some(p)) = (vid, pid) {
+                return format!("{} [VID:{:04X} PID:{:04X}]", desc, v, p);
+            }
+            if instance_id.starts_with("ACPI") {
+                return format!("{} (Internal Laptop)", desc);
+            }
+            return desc;
+        }
+    }
+
+    // 2. Fallback to VID/PID
     if let (Some(v), Some(p)) = (vid, pid) {
-        format!("Keyboard (VID_{:04X}&PID_{:04X})", v, p)
+        format!("USB Keyboard [VID:{:04X} PID:{:04X}]", v, p)
+    } else if instance_id.starts_with("ACPI") {
+        "Internal PS/2 Keyboard".to_string()
     } else {
         format!("Keyboard ({})", instance_id)
     }
@@ -117,7 +199,6 @@ pub fn enumerate_raw_keyboards() -> Vec<(String, String)> {
             );
 
             if copied != u32::MAX && copied > 0 {
-                // Remove trailing null terminator if present
                 let len = if name_buf.last() == Some(&0) {
                     name_buf.len() - 1
                 } else {
@@ -142,14 +223,19 @@ pub fn get_keyboard_devices(config: &AppConfig) -> Vec<KeyboardDeviceInfo> {
 
     // Map connected physical devices
     for (raw_path, instance_id) in raw_keyboards {
-        // Skip terminal server synthetic keyboards (RDP / Root) if desired, but keep standard HID
         let (vid, pid) = parse_vid_pid(&instance_id);
 
         let registered_conf = config.find_device(&instance_id);
         let is_registered = registered_conf.is_some();
 
         let (name, layout_mode, ctrl_ime_enabled) = if let Some(conf) = registered_conf {
-            (conf.name.clone(), conf.layout_mode, conf.ctrl_ime_enabled)
+            // If the saved name was generic, update it with human-friendly name
+            let display_name = if conf.name.starts_with("Keyboard (HID\\") || conf.name.starts_with("Keyboard (ACPI\\") {
+                generate_device_name(&instance_id, vid, pid)
+            } else {
+                conf.name.clone()
+            };
+            (display_name, conf.layout_mode, conf.ctrl_ime_enabled)
         } else {
             (
                 generate_device_name(&instance_id, vid, pid),
@@ -174,6 +260,11 @@ pub fn get_keyboard_devices(config: &AppConfig) -> Vec<KeyboardDeviceInfo> {
 
     // Also include registered devices from config that are not currently connected
     for registered in &config.devices {
+        // Skip dummy sample devices if they don't look real
+        if registered.instance_id.contains("EXAMPLE") {
+            continue;
+        }
+
         if !devices
             .iter()
             .any(|d| d.instance_id.eq_ignore_ascii_case(&registered.instance_id))
@@ -217,14 +308,12 @@ mod tests {
     }
 
     #[test]
-    fn test_enumerate_returns_list_on_windows() {
+    fn test_enumerate_returns_readable_names() {
         let config = AppConfig::default();
         let devices = get_keyboard_devices(&config);
-        // On an active Windows machine, there should normally be at least one keyboard
-        // or an empty list without crashing.
-        println!("Enumerated {} keyboards", devices.len());
+        println!("Enumerated {} keyboards with readable names:", devices.len());
         for dev in &devices {
-            println!("  Found keyboard: {} [{}]", dev.name, dev.instance_id);
+            println!("  Name: '{}' [{}]", dev.name, dev.instance_id);
         }
     }
 }

@@ -6,18 +6,20 @@ export struct DeviceItem {
     is_connected: bool,
     layout_mode: string,       // "passthrough" | "us-to-jis" | "jis-to-us"
     ctrl_ime_enabled: bool,
+    is_active_typing: bool,    // whether key was recently pressed on this keyboard
 }
 
 export component MainWindow inherits Window {
     title: "HID Keyboard Layout Remapper (Standalone)";
-    preferred-width: 820px;
-    preferred-height: 600px;
-    min-width: 700px;
-    min-height: 500px;
+    preferred-width: 860px;
+    preferred-height: 640px;
+    min-width: 760px;
+    min-height: 540px;
     background: #f3f3f3;
 
     in-out property <bool> global_enabled: true;
-    in-out property <string> engine_status: "Standalone Engine: Active";
+    in-out property <string> engine_status: "Standalone Engine: Active (Auto-Detecting)";
+    in-out property <string> live_input_log: "Press keys to test remapping and IME switching...";
     in-out property <[DeviceItem]> devices: [];
 
     callback toggle_global_enabled(bool);
@@ -28,8 +30,8 @@ export component MainWindow inherits Window {
     callback hide_window();
 
     VerticalLayout {
-        padding: 20px;
-        spacing: 16px;
+        padding: 18px;
+        spacing: 14px;
 
         // Header bar with status and Global switch
         Rectangle {
@@ -37,7 +39,7 @@ export component MainWindow inherits Window {
             border-radius: 8px;
             drop-shadow-blur: 4px;
             drop-shadow-color: #00000015;
-            height: 70px;
+            height: 72px;
 
             HorizontalLayout {
                 padding-left: 20px;
@@ -88,6 +90,43 @@ export component MainWindow inherits Window {
             }
         }
 
+        // Live Key Monitor Banner
+        Rectangle {
+            background: #e7f3ff;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #0078d4;
+            height: 44px;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 10px;
+                alignment: start;
+
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "Live Monitor:";
+                        font-size: 12px;
+                        font-weight: 700;
+                        color: #004578;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: live_input_log;
+                        font-size: 12px;
+                        font-weight: 500;
+                        color: #106ebe;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
         // Main Device List Card
         Rectangle {
             background: #ffffff;
@@ -102,15 +141,15 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     alignment: space-between;
                     Text {
-                        text: "Detected Keyboards (" + root.devices.length + ")";
+                        text: "Connected Keyboards (" + root.devices.length + ")";
                         font-size: 15px;
                         font-weight: 600;
                         color: #333333;
                     }
                     Text {
-                        text: "Select layout mode & Ctrl IME toggle for each keyboard";
+                        text: "PnP Auto-Detection Active. Type on a keyboard to see live activity.";
                         font-size: 11px;
-                        color: #777777;
+                        color: #666666;
                     }
                 }
 
@@ -119,10 +158,10 @@ export component MainWindow inherits Window {
                         spacing: 8px;
 
                         for dev[idx] in root.devices: Rectangle {
-                            background: dev.is_connected ? #f8f9fa : #efefef;
+                            background: dev.is_active_typing ? #e6f4ea : (dev.is_connected ? #f8f9fa : #efefef);
                             border-radius: 6px;
-                            border-width: 1px;
-                            border-color: dev.is_connected ? #0078d4 : #cccccc;
+                            border-width: dev.is_active_typing ? 2px : 1px;
+                            border-color: dev.is_active_typing ? #137333 : (dev.is_connected ? #0078d4 : #cccccc);
                             height: 68px;
 
                             HorizontalLayout {
@@ -133,7 +172,7 @@ export component MainWindow inherits Window {
                                 // Left: Device info
                                 VerticalLayout {
                                     alignment: center;
-                                    width: 320px;
+                                    width: 360px;
 
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -145,9 +184,10 @@ export component MainWindow inherits Window {
                                             overflow: elide;
                                         }
                                         Text {
-                                            text: dev.is_connected ? "[Connected]" : "[Disconnected]";
+                                            text: dev.is_active_typing ? "[Typing Now]" : (dev.is_connected ? "[Connected]" : "[Disconnected]");
                                             font-size: 11px;
-                                            color: dev.is_connected ? #008000 : #888888;
+                                            font-weight: dev.is_active_typing ? 700 : 400;
+                                            color: dev.is_active_typing ? #137333 : (dev.is_connected ? #008000 : #888888);
                                         }
                                     }
 
@@ -205,4 +245,3 @@ export component MainWindow inherits Window {
         }
     }
 }
-
