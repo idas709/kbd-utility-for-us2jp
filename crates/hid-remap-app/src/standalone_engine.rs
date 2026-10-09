@@ -25,6 +25,17 @@ static HOOK_HANDLE: Mutex<isize> = Mutex::new(0);
 static GLOBAL_ENABLED: AtomicBool = AtomicBool::new(true);
 static ENGINE_STATE: Mutex<Option<EngineSharedState>> = Mutex::new(None);
 static ACTIVITY_CALLBACK: Mutex<Option<Box<dyn Fn(String, String) + Send + Sync>>> = Mutex::new(None);
+static LAST_TYPED_DEVICE: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn set_last_typed_device(instance_id: String) {
+    if let Ok(mut guard) = LAST_TYPED_DEVICE.lock() {
+        *guard = Some(instance_id);
+    }
+}
+
+pub fn get_last_typed_device() -> Option<String> {
+    LAST_TYPED_DEVICE.lock().ok().and_then(|g| g.clone())
+}
 
 struct DeviceEngine {
     engine: RemapEngine,
@@ -32,7 +43,6 @@ struct DeviceEngine {
 }
 
 struct EngineSharedState {
-    #[allow(dead_code)]
     device_engines: HashMap<String, DeviceEngine>,
     default_engine: DeviceEngine,
     config: AppConfig,
@@ -53,9 +63,9 @@ fn create_engine_for_mode(mode: LayoutMode, ctrl_ime_enabled: bool, timeout_ms: 
     }
 }
 
-pub fn start_standalone_engine(config: AppConfig) -> Result<(), &'static str> {
+pub fn start_standalone_engine(config: AppConfig, connected_ids: &[String]) -> Result<(), &'static str> {
     GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
-    update_engine_state(config);
+    update_engine_state(config, connected_ids);
 
     unsafe {
         let hook = SetWindowsHookExW(
@@ -74,28 +84,45 @@ pub fn start_standalone_engine(config: AppConfig) -> Result<(), &'static str> {
     }
 }
 
-pub fn update_engine_config(config: AppConfig) {
+pub fn update_engine_config(config: AppConfig, connected_ids: &[String]) {
     GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
-    update_engine_state(config);
+    update_engine_state(config, connected_ids);
 }
 
-fn update_engine_state(config: AppConfig) {
+fn update_engine_state(config: AppConfig, connected_ids: &[String]) {
     let mut device_engines = HashMap::new();
     let timeout = config.ime.tap_timeout_ms;
 
-    // Determine active layout mode:
-    // If any device is explicitly configured to UsToJis or JisToUs, use that mode!
-    // Otherwise, fallback to config.general.default_layout_mode.
-    let active_mode = if let Some(dev) = config.devices.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
-        dev.layout_mode
-    } else {
-        config.general.default_layout_mode
-    };
+    let (active_mode, default_ctrl_ime, connected_count) = {
+        let connected_devs: Vec<&hid_remap_core::config::DeviceConfig> = if !connected_ids.is_empty() {
+            config
+                .devices
+                .iter()
+                .filter(|d| connected_ids.iter().any(|cid| cid.eq_ignore_ascii_case(&d.instance_id)))
+                .collect()
+        } else {
+            config.devices.iter().collect()
+        };
 
-    let default_ctrl_ime = config
-        .devices
-        .iter()
-        .any(|d| d.ctrl_ime_enabled) || true;
+        let all_connected_passthrough = !connected_devs.is_empty()
+            && connected_devs.iter().all(|d| d.layout_mode == LayoutMode::Passthrough);
+
+        let active_mode = if all_connected_passthrough {
+            LayoutMode::Passthrough
+        } else if let Some(dev) = connected_devs.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+            dev.layout_mode
+        } else {
+            config.general.default_layout_mode
+        };
+
+        let default_ctrl_ime = if !connected_devs.is_empty() {
+            connected_devs.iter().any(|d| d.ctrl_ime_enabled)
+        } else {
+            config.devices.iter().any(|d| d.ctrl_ime_enabled)
+        };
+
+        (active_mode, default_ctrl_ime, connected_devs.len())
+    };
 
     for dev in &config.devices {
         device_engines.insert(
@@ -112,7 +139,12 @@ fn update_engine_state(config: AppConfig) {
         default_engine,
         config,
     });
-    info!("Engine updated. Active Layout Mode: {:?}, Ctrl IME: {}", active_mode, default_ctrl_ime);
+    info!(
+        "Engine updated. Connected Devs: {}, Active Mode: {:?}, Ctrl IME: {}",
+        connected_count,
+        active_mode,
+        default_ctrl_ime
+    );
 }
 
 pub fn stop_standalone_engine() {
@@ -280,7 +312,17 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
                 if let Ok(mut guard) = ENGINE_STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        let dev_engine = &mut state.default_engine;
+                        let active_id = get_last_typed_device();
+                        let (dev_engine, dev_label) = if let Some(ref id) = active_id {
+                            let upper = id.to_uppercase();
+                            if let Some(engine) = state.device_engines.get_mut(&upper) {
+                                (engine, id.as_str())
+                            } else {
+                                (&mut state.default_engine, "Default")
+                            }
+                        } else {
+                            (&mut state.default_engine, "Default")
+                        };
 
                         // 1. Process Ctrl single-tap IME gesture
                         if is_left_ctrl || is_right_ctrl || scan_code == 0x1D {
@@ -324,7 +366,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                                             .map(|e| friendly_scancode_desc(e.scan_code))
                                             .collect();
                                         activity_info = Some((
-                                            "Keyboard Input".to_string(),
+                                            dev_label.to_string(),
                                             format!("✔ REMAPPED: {} -> Output: [{}]", key_desc, out_desc.join(", ")),
                                         ));
                                     }
@@ -340,8 +382,12 @@ unsafe extern "system" fn low_level_keyboard_proc(
                                     };
 
                                     activity_info = Some((
-                                        "Keyboard Input".to_string(),
-                                        format!("Passthrough: {} (US & JIS share same key)", char_hint),
+                                        dev_label.to_string(),
+                                        if dev_engine.engine.layout_mode == LayoutMode::Passthrough {
+                                            format!("Passthrough: {} (Mode: Passthrough)", char_hint)
+                                        } else {
+                                            format!("Passthrough: {} (US & JIS share same key)", char_hint)
+                                        },
                                     ));
                                 }
                             }

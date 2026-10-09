@@ -1,8 +1,8 @@
 [general]
 enabled = true
 windows_layout = "jis106"
-start_with_windows = true
-default_layout_mode = "us-to-jis"
+start_with_windows = false
+default_layout_mode = "passthrough"
 
 [ime]
 method = "imm"
@@ -11,29 +11,29 @@ tap_timeout_ms = 1000
 [[devices]]
 instance_id = 'ACPI\MSF0001\4&3488ffef&0'
 name = "Standard PS/2 Keyboard (Internal Laptop)"
-layout_mode = "us-to-jis"
+layout_mode = "passthrough"
 ctrl_ime_enabled = true
 
 [[devices]]
 instance_id = 'Microsoft Keyboard RID\0'
 name = 'Keyboard (Microsoft Keyboard RID\0)'
-layout_mode = "us-to-jis"
+layout_mode = "passthrough"
 ctrl_ime_enabled = true
 
 [[devices]]
 instance_id = 'HID\ConvertedDevice&Col01\5&32cf90e6&0&0000'
 name = "HID Keyboard Device"
-layout_mode = "us-to-jis"
+layout_mode = "passthrough"
 ctrl_ime_enabled = true
 
 [[devices]]
 instance_id = 'HID\ConvertedDevice&Col01\5&2cf12849&0&0000'
 name = "HID Keyboard Device"
-layout_mode = "us-to-jis"
+layout_mode = "passthrough"
 ctrl_ime_enabled = true
 
 [[devices]]
 instance_id = 'HID\INT33D2&Col01\6&231babf5&0&0000'
 name = "HID Keyboard Device"
-layout_mode = "us-to-jis"
+layout_mode = "passthrough"
 ctrl_ime_enabled = true

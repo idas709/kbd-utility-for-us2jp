@@ -1,7 +1,14 @@
+use std::collections::HashMap;
+use std::os::windows::ffi::OsStringExt;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tracing::info;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::Input::{
+    GetRawInputData, GetRawInputDeviceInfoW, RegisterRawInputDevices, HRAWINPUT,
+    RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIDI_DEVICENAME,
+};
 use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
     NOTIFYICONDATAW,
@@ -11,9 +18,53 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, PostMessageW, PostQuitMessage,
     RegisterClassExW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, HICON, HMENU,
     IDI_APPLICATION, MF_CHECKED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_BOTTOMALIGN,
-    TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL,
+    TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_INPUT, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL,
     WM_RBUTTONUP, WM_USER, WNDCLASSEXW,
 };
+
+static DEVICE_CACHE: Mutex<Option<HashMap<isize, String>>> = Mutex::new(None);
+
+fn resolve_device_instance_id(h_device: HANDLE) -> Option<String> {
+    let key = h_device as isize;
+    if let Ok(guard) = DEVICE_CACHE.lock() {
+        if let Some(cache) = guard.as_ref() {
+            if let Some(id) = cache.get(&key) {
+                return Some(id.clone());
+            }
+        }
+    }
+
+    let mut name_len: u32 = 0;
+    unsafe {
+        GetRawInputDeviceInfoW(h_device, RIDI_DEVICENAME, std::ptr::null_mut(), &mut name_len);
+        if name_len > 0 {
+            let mut buf: Vec<u16> = vec![0; name_len as usize];
+            let copied = GetRawInputDeviceInfoW(
+                h_device,
+                RIDI_DEVICENAME,
+                buf.as_mut_ptr() as *mut _,
+                &mut name_len,
+            );
+            if copied > 0 && copied != u32::MAX {
+                let len = if buf.last() == Some(&0) {
+                    buf.len() - 1
+                } else {
+                    buf.len()
+                };
+                let path_os = std::ffi::OsString::from_wide(&buf[..len]);
+                let dev_path = path_os.to_string_lossy().to_string();
+                let instance_id = hid_remap_device::device_path_to_instance_id(&dev_path);
+
+                if let Ok(mut guard) = DEVICE_CACHE.lock() {
+                    let cache = guard.get_or_insert_with(HashMap::new);
+                    cache.insert(key, instance_id.clone());
+                }
+                return Some(instance_id);
+            }
+        }
+    }
+    None
+}
 
 const WM_TRAY_CALLBACK: u32 = WM_USER + 100;
 const ID_OPEN: usize = 1001;
@@ -23,8 +74,6 @@ const ID_EXIT: usize = 1004;
 
 static GLOBAL_ENABLED: AtomicBool = AtomicBool::new(true);
 static STARTUP_ENABLED: AtomicBool = AtomicBool::new(true);
-
-use std::sync::Mutex;
 
 type Callback = Box<dyn Fn() + Send + Sync + 'static>;
 
@@ -171,6 +220,32 @@ unsafe extern "system" fn tray_wnd_proc(
             }
             0
         }
+        WM_INPUT => {
+            let hraw = l_param as HRAWINPUT;
+            let mut size: u32 = 0;
+            let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
+            GetRawInputData(hraw, RID_INPUT, std::ptr::null_mut(), &mut size, header_size);
+            if size > 0 {
+                let mut buffer: Vec<u8> = vec![0; size as usize];
+                if GetRawInputData(
+                    hraw,
+                    RID_INPUT,
+                    buffer.as_mut_ptr() as *mut _,
+                    &mut size,
+                    header_size,
+                ) == size
+                {
+                    let raw = &*(buffer.as_ptr() as *const RAWINPUT);
+                    let h_device = raw.header.hDevice;
+                    if !h_device.is_null() {
+                        if let Some(instance_id) = resolve_device_instance_id(h_device) {
+                            crate::standalone_engine::set_last_typed_device(instance_id);
+                        }
+                    }
+                }
+            }
+            DefWindowProcW(hwnd, msg, w_param, l_param)
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             0
@@ -269,6 +344,20 @@ fn run_tray_thread() {
             info!("Failed to create tray helper window");
             return;
         }
+
+        // Register for Raw Input keyboard events to identify physical devices
+        let rid = RAWINPUTDEVICE {
+            usUsagePage: 0x01, // Generic Desktop Controls
+            usUsage: 0x06,     // Keyboard
+            dwFlags: RIDEV_INPUTSINK,
+            hwndTarget: hwnd,
+        };
+        let reg_ok = RegisterRawInputDevices(
+            &rid,
+            1,
+            std::mem::size_of::<RAWINPUTDEVICE>() as u32,
+        );
+        info!("Raw input sink registered on tray window: {}", reg_ok != 0);
 
         let icon = get_app_icon();
 

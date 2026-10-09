@@ -53,6 +53,12 @@ fn main() -> Result<(), slint::PlatformError> {
         .retain(|d| !d.instance_id.contains("EXAMPLE"));
 
     let actual_devices = get_keyboard_devices(&initial_config);
+    let connected_ids: Vec<String> = actual_devices
+        .iter()
+        .filter(|d| d.is_connected)
+        .map(|d| d.instance_id.clone())
+        .collect();
+
     for dev in &actual_devices {
         if dev.is_connected && initial_config.find_device(&dev.instance_id).is_none() {
             let mut new_dev = DeviceConfig::new(&dev.instance_id, &dev.name);
@@ -61,7 +67,16 @@ fn main() -> Result<(), slint::PlatformError> {
             initial_config.upsert_device(new_dev);
         }
     }
-    if let Some(active_dev) = initial_config.devices.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+
+    let connected_devs: Vec<&DeviceConfig> = initial_config
+        .devices
+        .iter()
+        .filter(|d| connected_ids.iter().any(|cid| cid.eq_ignore_ascii_case(&d.instance_id)))
+        .collect();
+
+    if !connected_devs.is_empty() && connected_devs.iter().all(|d| d.layout_mode == LayoutMode::Passthrough) {
+        initial_config.general.default_layout_mode = LayoutMode::Passthrough;
+    } else if let Some(active_dev) = connected_devs.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
         initial_config.general.default_layout_mode = active_dev.layout_mode;
     }
     let _ = initial_config.save_to_file("config.toml");
@@ -69,7 +84,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let config = Rc::new(RefCell::new(initial_config));
 
     // Start user-mode standalone input remapping engine
-    if let Err(e) = start_standalone_engine(config.borrow().clone()) {
+    if let Err(e) = start_standalone_engine(config.borrow().clone(), &connected_ids) {
         warn!("Failed to start standalone engine hook: {}", e);
     }
 
@@ -133,10 +148,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     last_connected_ids.borrow().len(),
                     current_ids.len()
                 );
-                *last_connected_ids.borrow_mut() = current_ids;
+                *last_connected_ids.borrow_mut() = current_ids.clone();
 
                 let items = build_device_items(&scanned);
                 dev_model_pnp.set_vec(items);
+                update_engine_config(current_conf, &current_ids);
             }
         },
     );
@@ -149,7 +165,14 @@ fn main() -> Result<(), slint::PlatformError> {
             info!("Global remapping enabled changed: {}", enabled);
             config.borrow_mut().general.enabled = enabled;
             tray::update_tray_enabled(enabled);
-            update_engine_config(config.borrow().clone());
+            let current_conf = config.borrow().clone();
+            let scanned = get_keyboard_devices(&current_conf);
+            let current_ids: Vec<String> = scanned
+                .iter()
+                .filter(|d| d.is_connected)
+                .map(|d| d.instance_id.clone())
+                .collect();
+            update_engine_config(current_conf, &current_ids);
             if let Some(win) = window_weak_toggle.upgrade() {
                 win.set_engine_status(SharedString::from(if enabled {
                     "Standalone Engine: Active (リマップ動作中)"
@@ -204,7 +227,27 @@ fn main() -> Result<(), slint::PlatformError> {
                     conf.upsert_device(new_dev);
                 }
                 conf.general.default_layout_mode = mode;
-                update_engine_config(conf.clone());
+
+                let current_connected = get_keyboard_devices(&conf);
+                let connected_ids: Vec<String> = current_connected
+                    .iter()
+                    .filter(|d| d.is_connected)
+                    .map(|d| d.instance_id.clone())
+                    .collect();
+
+                let connected_devs: Vec<&DeviceConfig> = conf
+                    .devices
+                    .iter()
+                    .filter(|d| connected_ids.iter().any(|cid| cid.eq_ignore_ascii_case(&d.instance_id)))
+                    .collect();
+
+                if !connected_devs.is_empty() && connected_devs.iter().all(|d| d.layout_mode == LayoutMode::Passthrough) {
+                    conf.general.default_layout_mode = LayoutMode::Passthrough;
+                } else if let Some(active_dev) = connected_devs.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+                    conf.general.default_layout_mode = active_dev.layout_mode;
+                }
+
+                update_engine_config(conf.clone(), &connected_ids);
                 let _ = conf.save_to_file("config.toml");
                 info!("Updated layout mode for {}: {}", item.name, mode_str);
 
@@ -216,7 +259,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     win.set_show_save_toast(true);
                     win.set_engine_status(SharedString::from(format!(
                         "Standalone Engine: Active [{:?} 有効]",
-                        mode
+                        conf.general.default_layout_mode
                     )));
                 }
             }
@@ -243,7 +286,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     new_dev.ctrl_ime_enabled = enabled;
                     conf.upsert_device(new_dev);
                 }
-                update_engine_config(conf.clone());
+
+                let current_connected = get_keyboard_devices(&conf);
+                let connected_ids: Vec<String> = current_connected
+                    .iter()
+                    .filter(|d| d.is_connected)
+                    .map(|d| d.instance_id.clone())
+                    .collect();
+
+                update_engine_config(conf.clone(), &connected_ids);
                 let _ = conf.save_to_file("config.toml");
                 info!("Updated Ctrl IME for {}: {}", item.name, enabled);
 
@@ -286,11 +337,27 @@ fn main() -> Result<(), slint::PlatformError> {
         let config = config.clone();
         move || {
             let mut conf = config.borrow_mut();
-            if let Some(active_dev) = conf.devices.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+            let current_connected = get_keyboard_devices(&conf);
+            let connected_ids: Vec<String> = current_connected
+                .iter()
+                .filter(|d| d.is_connected)
+                .map(|d| d.instance_id.clone())
+                .collect();
+
+            let connected_devs: Vec<&DeviceConfig> = conf
+                .devices
+                .iter()
+                .filter(|d| connected_ids.iter().any(|cid| cid.eq_ignore_ascii_case(&d.instance_id)))
+                .collect();
+
+            if !connected_devs.is_empty() && connected_devs.iter().all(|d| d.layout_mode == LayoutMode::Passthrough) {
+                conf.general.default_layout_mode = LayoutMode::Passthrough;
+            } else if let Some(active_dev) = connected_devs.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
                 conf.general.default_layout_mode = active_dev.layout_mode;
             }
+
             let save_res = conf.save_to_file("config.toml");
-            update_engine_config(conf.clone());
+            update_engine_config(conf.clone(), &connected_ids);
 
             if let Some(window) = window_weak_save.upgrade() {
                 match save_res {
