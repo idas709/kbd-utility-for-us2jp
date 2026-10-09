@@ -204,6 +204,21 @@ pub fn map_us_physical_to_jis(scan_code: ScanCode, physical_shift: bool) -> Opti
             ))
         }
 
+        // CapsLock (0x3A)
+        // On US keyboards, CapsLock toggles CapsLock directly.
+        // On JIS Windows environment, Windows requires Shift + CapsLock to toggle CapsLock.
+        // Mapping CAPSLOCK to RequireShift ensures pressing CapsLock toggles and releases CapsLock cleanly!
+        (CAPSLOCK, false) => Some(KeyMapping::new(
+            CAPSLOCK,
+            KeyFlags::NORMAL,
+            TargetShiftState::RequireShift,
+        )),
+        (CAPSLOCK, true) => Some(KeyMapping::new(
+            CAPSLOCK,
+            KeyFlags::NORMAL,
+            TargetShiftState::RequireShift,
+        )),
+
         // All other keys pass through unchanged
         _ => None,
     }

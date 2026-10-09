@@ -42,8 +42,50 @@ fn build_device_items(devices: &[KeyboardDeviceInfo]) -> Vec<DeviceItem> {
         .collect()
 }
 
+fn to_wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     tracing_subscriber::fmt::init();
+
+    // Prevent multiple instances (single-instance mutex lock)
+    let mutex_name = to_wide("Local\\HIDKeyboardLayoutRemapperSingleInstanceMutex");
+    let h_mutex = unsafe {
+        windows_sys::Win32::System::Threading::CreateMutexW(
+            std::ptr::null(),
+            1, // take initial ownership
+            mutex_name.as_ptr(),
+        )
+    };
+
+    if h_mutex.is_null()
+        || unsafe { windows_sys::Win32::Foundation::GetLastError() }
+            == windows_sys::Win32::Foundation::ERROR_ALREADY_EXISTS
+    {
+        info!("Another instance of HID Keyboard Remapper is already running. Signaling existing instance...");
+        unsafe {
+            let class_name = to_wide("HIDRemapTrayWindowClass");
+            let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
+                class_name.as_ptr(),
+                std::ptr::null(),
+            );
+            if !hwnd.is_null() {
+                // Post ID_OPEN to the tray window to open/restore settings window
+                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    hwnd,
+                    windows_sys::Win32::UI::WindowsAndMessaging::WM_COMMAND,
+                    1001,
+                    0,
+                );
+            }
+            if !h_mutex.is_null() {
+                windows_sys::Win32::Foundation::CloseHandle(h_mutex);
+            }
+        }
+        return Ok(());
+    }
+
     info!("Starting HID Keyboard Remapper Standalone Application with Auto-Detection...");
 
     // Clean up sample / dummy configs and detect actual hardware
@@ -316,71 +358,21 @@ fn main() -> Result<(), slint::PlatformError> {
         let config = config.clone();
         let dev_model = device_model.clone();
         move || {
-            let scanned = get_keyboard_devices(&config.borrow());
+            let conf = config.borrow_mut();
+            let scanned = get_keyboard_devices(&conf);
             let new_items = build_device_items(&scanned);
             dev_model.set_vec(new_items);
+            let connected_ids: Vec<String> = scanned.iter().filter(|d| d.is_connected).map(|d| d.instance_id.clone()).collect();
+            update_engine_config(conf.clone(), &connected_ids);
+            let _ = conf.save_to_file("config.toml");
             info!("Manually refreshed keyboard devices ({} found)", scanned.len());
 
             if let Some(win) = window_weak_refresh.upgrade() {
                 win.set_save_toast_text(SharedString::from(format!(
-                    "キーボード再スキャン完了: 接続デバイス {} 台を検出",
+                    "キーボード再スキャン完了: 接続デバイス {} 台を検出 (即時反映済)",
                     scanned.iter().filter(|d| d.is_connected).count()
                 )));
                 win.set_show_save_toast(true);
-            }
-        }
-    });
-
-    // Save configuration button with visual toast feedback!
-    let window_weak_save = main_window.as_weak();
-    main_window.on_save_configuration({
-        let config = config.clone();
-        move || {
-            let mut conf = config.borrow_mut();
-            let current_connected = get_keyboard_devices(&conf);
-            let connected_ids: Vec<String> = current_connected
-                .iter()
-                .filter(|d| d.is_connected)
-                .map(|d| d.instance_id.clone())
-                .collect();
-
-            let connected_devs: Vec<&DeviceConfig> = conf
-                .devices
-                .iter()
-                .filter(|d| connected_ids.iter().any(|cid| cid.eq_ignore_ascii_case(&d.instance_id)))
-                .collect();
-
-            if !connected_devs.is_empty() && connected_devs.iter().all(|d| d.layout_mode == LayoutMode::Passthrough) {
-                conf.general.default_layout_mode = LayoutMode::Passthrough;
-            } else if let Some(active_dev) = connected_devs.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
-                conf.general.default_layout_mode = active_dev.layout_mode;
-            }
-
-            let save_res = conf.save_to_file("config.toml");
-            update_engine_config(conf.clone(), &connected_ids);
-
-            if let Some(window) = window_weak_save.upgrade() {
-                match save_res {
-                    Ok(_) => {
-                        let active_count = conf.devices.iter().filter(|d| d.layout_mode != LayoutMode::Passthrough).count();
-                        window.set_save_toast_text(SharedString::from(format!(
-                            "設定を保存し即座に適用しました！（モード: {:?}, 対象キーボード: {}台）",
-                            conf.general.default_layout_mode,
-                            active_count
-                        )));
-                        window.set_show_save_toast(true);
-                        window.set_engine_status(SharedString::from(format!(
-                            "Standalone Engine: Active [{:?} 有効・設定保存済]",
-                            conf.general.default_layout_mode
-                        )));
-                        info!("Configuration saved to config.toml successfully.");
-                    }
-                    Err(e) => {
-                        window.set_save_toast_text(SharedString::from(format!("保存エラー: {}", e)));
-                        window.set_show_save_toast(true);
-                        warn!("Failed to save config: {}", e);
-                    }
-                }
             }
         }
     });
@@ -413,10 +405,20 @@ fn main() -> Result<(), slint::PlatformError> {
     let tray_initial_startup = config.borrow().general.start_with_windows;
 
     let _tray = tray::start_tray_service(
-        // on_open (left click or tray menu '設定画面を開く')
+        // on_open (left click, tray menu '設定画面を開く', or 2nd instance activation)
         move || {
             let _ = window_weak_tray_open.upgrade_in_event_loop(|win| {
                 let _ = win.show();
+                let title = to_wide("HID Keyboard Layout Remapper (Standalone)");
+                unsafe {
+                    let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
+                        std::ptr::null(),
+                        title.as_ptr(),
+                    );
+                    if !hwnd.is_null() {
+                        windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+                    }
+                }
             });
         },
         // on_toggle (tray menu 'リマップ有効/無効')
@@ -456,5 +458,10 @@ fn main() -> Result<(), slint::PlatformError> {
     info!("Application resident in system tray. Starting persistent event loop...");
     let result = slint::run_event_loop_until_quit();
     stop_standalone_engine();
+    unsafe {
+        if !h_mutex.is_null() {
+            windows_sys::Win32::Foundation::CloseHandle(h_mutex);
+        }
+    }
     result
 }

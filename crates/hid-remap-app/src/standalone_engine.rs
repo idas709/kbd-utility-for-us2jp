@@ -195,12 +195,14 @@ fn friendly_key_name(scan_code: u16, is_shift: bool) -> &'static str {
         (LALT, _) => "Left Alt",
         (SPACE, _) => "Space",
         (ENTER, _) => "Enter",
+        (CAPSLOCK, _) => "CapsLock",
         _ => "Key",
     }
 }
 
 fn friendly_scancode_desc(scan_code: u16) -> String {
     match scan_code {
+        CAPSLOCK => "CapsLock (Toggle)".to_string(),
         LBRACKET => "JIS '@' (0x1A)".to_string(),
         EQUALS => "JIS '^' (0x0D)".to_string(),
         KEY_6 => "JIS '&' (0x07)".to_string(),

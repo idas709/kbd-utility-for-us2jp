@@ -134,7 +134,6 @@ export component MainWindow inherits Window {
     callback change_device_layout(int, string);
     callback toggle_device_ctrl_ime(int, bool);
     callback refresh_devices();
-    callback save_configuration();
     callback hide_window();
 
     VerticalLayout {
@@ -197,13 +196,6 @@ export component MainWindow inherits Window {
                     }
 
                     ActionBtn {
-                        width: 140px;
-                        text: "💾 Save & Apply";
-                        primary: true;
-                        clicked => { root.save_configuration(); }
-                    }
-
-                    ActionBtn {
                         width: 80px;
                         text: "トレイへ";
                         primary: false;
@@ -251,7 +243,7 @@ export component MainWindow inherits Window {
                 if root.show_save_toast : VerticalLayout {
                     alignment: center;
                     Text {
-                        text: "[ 設定反映完了 / Applied ]";
+                        text: "[ 即時反映済 / Auto-Saved ]";
                         font-size: 12px;
                         font-weight: 700;
                         color: #155724;
