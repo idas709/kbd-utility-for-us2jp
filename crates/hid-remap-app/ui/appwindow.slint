@@ -18,8 +18,10 @@ export component MainWindow inherits Window {
     background: #f3f3f3;
 
     in-out property <bool> global_enabled: true;
-    in-out property <string> engine_status: "Standalone Engine: Active (Auto-Detecting)";
+    in-out property <string> engine_status: "Standalone Engine: Active";
     in-out property <string> live_input_log: "Press keys to test remapping and IME switching...";
+    in-out property <string> save_toast_text: "";
+    in-out property <bool> show_save_toast: false;
     in-out property <[DeviceItem]> devices: [];
 
     callback toggle_global_enabled(bool);
@@ -31,7 +33,7 @@ export component MainWindow inherits Window {
 
     VerticalLayout {
         padding: 18px;
-        spacing: 14px;
+        spacing: 12px;
 
         // Header bar with status and Global switch
         Rectangle {
@@ -85,6 +87,31 @@ export component MainWindow inherits Window {
                     Button {
                         text: "Hide to Tray";
                         clicked => { root.hide_window(); }
+                    }
+                }
+            }
+        }
+
+        // Save & Apply Toast Banner (shown when save_configuration is triggered)
+        if root.show_save_toast : Rectangle {
+            background: #d4edda;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #28a745;
+            height: 40px;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: root.save_toast_text;
+                        font-size: 13px;
+                        font-weight: 700;
+                        color: #155724;
                     }
                 }
             }
@@ -147,7 +174,7 @@ export component MainWindow inherits Window {
                         color: #333333;
                     }
                     Text {
-                        text: "PnP Auto-Detection Active. Type on a keyboard to see live activity.";
+                        text: "Plug or unplug keyboards to auto-update. Select mode below.";
                         font-size: 11px;
                         color: #666666;
                     }
@@ -184,10 +211,10 @@ export component MainWindow inherits Window {
                                             overflow: elide;
                                         }
                                         Text {
-                                            text: dev.is_active_typing ? "[Typing Now]" : (dev.is_connected ? "[Connected]" : "[Disconnected]");
+                                            text: dev.is_connected ? "[Connected]" : "[Disconnected]";
                                             font-size: 11px;
                                             font-weight: dev.is_active_typing ? 700 : 400;
-                                            color: dev.is_active_typing ? #137333 : (dev.is_connected ? #008000 : #888888);
+                                            color: dev.is_connected ? #008000 : #888888;
                                         }
                                     }
 

@@ -21,9 +21,12 @@ fn to_layout_mode(s: &str) -> LayoutMode {
     }
 }
 
+/// Convert devices list to UI items.
+/// Only displays currently physically connected keyboards so unplugged devices disappear!
 fn build_device_items(devices: &[KeyboardDeviceInfo]) -> Vec<DeviceItem> {
     devices
         .iter()
+        .filter(|d| d.is_connected) // Filter: Show connected keyboards only!
         .map(|d| DeviceItem {
             name: SharedString::from(&d.name),
             instance_id: SharedString::from(&d.instance_id),
@@ -47,9 +50,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let actual_devices = get_keyboard_devices(&initial_config);
     for dev in &actual_devices {
-        if initial_config.find_device(&dev.instance_id).is_none() {
+        if dev.is_connected && initial_config.find_device(&dev.instance_id).is_none() {
             let mut new_dev = DeviceConfig::new(&dev.instance_id, &dev.name);
-            new_dev.layout_mode = LayoutMode::UsToJis; // Default to UsToJis for convenient immediate use
+            new_dev.layout_mode = LayoutMode::UsToJis; // Default to UsToJis for convenience
             new_dev.ctrl_ime_enabled = true;
             initial_config.upsert_device(new_dev);
         }
@@ -83,24 +86,41 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // PnP Hotplug auto-detection timer (runs safely on UI event loop every 1.5s)
+    // PnP Hotplug auto-detection timer (checks connected devices list every 1 second)
     let pnp_timer = slint::Timer::default();
     let config_pnp = config.clone();
     let dev_model_pnp = device_model.clone();
+    let last_connected_ids = Rc::new(RefCell::new(
+        scanned_devices
+            .iter()
+            .filter(|d| d.is_connected)
+            .map(|d| d.instance_id.clone())
+            .collect::<Vec<String>>(),
+    ));
 
     pnp_timer.start(
         slint::TimerMode::Repeated,
-        Duration::from_millis(1500),
+        Duration::from_millis(1000),
         move || {
             let current_conf = config_pnp.borrow().clone();
             let scanned = get_keyboard_devices(&current_conf);
-            let current_count = dev_model_pnp.row_count();
+            let current_ids: Vec<String> = scanned
+                .iter()
+                .filter(|d| d.is_connected)
+                .map(|d| d.instance_id.clone())
+                .collect();
 
-            // Check if device count or connection status changed
-            if scanned.len() != current_count {
+            // Compare connected devices list with previous tick
+            if current_ids != *last_connected_ids.borrow() {
+                info!(
+                    "PnP device change detected! Connected devices changed from {} to {}",
+                    last_connected_ids.borrow().len(),
+                    current_ids.len()
+                );
+                *last_connected_ids.borrow_mut() = current_ids;
+
                 let items = build_device_items(&scanned);
                 dev_model_pnp.set_vec(items);
-                info!("Hotplug detected! Updated keyboard list ({} connected)", scanned.len());
             }
         },
     );
@@ -180,16 +200,32 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Save configuration button
+    // Save configuration button with visual toast feedback!
+    let window_weak_save = main_window.as_weak();
     main_window.on_save_configuration({
         let config = config.clone();
         move || {
             let conf = config.borrow();
-            if let Err(e) = conf.save_to_file("config.toml") {
-                warn!("Failed to save config: {}", e);
-            } else {
-                info!("Configuration saved to config.toml successfully.");
-                update_engine_config(conf.clone());
+            let save_res = conf.save_to_file("config.toml");
+            update_engine_config(conf.clone());
+
+            if let Some(window) = window_weak_save.upgrade() {
+                match save_res {
+                    Ok(_) => {
+                        let active_count = conf.devices.iter().filter(|d| d.layout_mode != LayoutMode::Passthrough).count();
+                        window.set_save_toast_text(SharedString::from(format!(
+                            "✔ Settings Saved & Applied! (Active Remapped Keyboards: {})",
+                            active_count
+                        )));
+                        window.set_show_save_toast(true);
+                        info!("Configuration saved to config.toml successfully.");
+                    }
+                    Err(e) => {
+                        window.set_save_toast_text(SharedString::from(format!("Failed to save config: {}", e)));
+                        window.set_show_save_toast(true);
+                        warn!("Failed to save config: {}", e);
+                    }
+                }
             }
         }
     });

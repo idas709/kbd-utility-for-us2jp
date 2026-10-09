@@ -9,13 +9,16 @@ use std::sync::Mutex;
 use tracing::info;
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
+    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT,
     LLKHF_EXTENDED, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
+
+const MAPVK_VK_TO_VSC: u32 = 0;
+const MAPVK_VSC_TO_VK_EX: u32 = 3;
 
 static HOOK_HANDLE: Mutex<isize> = Mutex::new(0);
 static GLOBAL_ENABLED: AtomicBool = AtomicBool::new(true);
@@ -79,20 +82,20 @@ fn update_engine_state(config: AppConfig) {
     let mut device_engines = HashMap::new();
     let timeout = config.ime.tap_timeout_ms;
 
-    // Default layout mode: Use the first real device's mode or UsToJis
+    // Determine the active mode: check all configured devices.
+    // If any real device has UsToJis, use UsToJis as active default mode.
     let default_mode = config
         .devices
         .iter()
-        .find(|d| !d.instance_id.contains("EXAMPLE"))
+        .find(|d| d.layout_mode != LayoutMode::Passthrough)
         .map(|d| d.layout_mode)
+        .or_else(|| config.devices.first().map(|d| d.layout_mode))
         .unwrap_or(LayoutMode::UsToJis);
 
     let default_ctrl_ime = config
         .devices
         .iter()
-        .find(|d| !d.instance_id.contains("EXAMPLE"))
-        .map(|d| d.ctrl_ime_enabled)
-        .unwrap_or(true);
+        .any(|d| d.ctrl_ime_enabled);
 
     for dev in &config.devices {
         device_engines.insert(
@@ -109,7 +112,7 @@ fn update_engine_state(config: AppConfig) {
         default_engine,
         config,
     });
-    info!("Engine updated. Default Mode: {:?}, Ctrl IME: {}", default_mode, default_ctrl_ime);
+    info!("Engine updated. Active Default Mode: {:?}, Ctrl IME: {}", default_mode, default_ctrl_ime);
 }
 
 pub fn stop_standalone_engine() {
@@ -139,11 +142,14 @@ fn send_synthetic_events(events: &[KeyEvent]) {
             flags |= KEYEVENTF_EXTENDEDKEY;
         }
 
+        // Map scan code to Virtual Key so applications that inspect vkCode also process correctly
+        let vk = unsafe { MapVirtualKeyW(evt.scan_code as u32, MAPVK_VSC_TO_VK_EX) as u16 };
+
         inputs.push(INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: 0,
+                    wVk: vk,
                     wScan: evt.scan_code,
                     dwFlags: flags,
                     time: 0,
@@ -170,7 +176,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
     if n_code >= 0 {
         let kbd = &*(l_param as *const KBDLLHOOKSTRUCT);
 
-        // Ignore synthetic inputs to prevent feedback loops
+        // Ignore our own synthetic inputs to prevent feedback loops
         if kbd.dwExtraInfo == EXTRA_INFO_MAGIC {
             return CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
         }
@@ -182,7 +188,16 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
             if is_down || is_up {
                 let is_extended = (kbd.flags & LLKHF_EXTENDED) != 0;
-                let scan_code = kbd.scanCode as u16;
+
+                // CRITICAL FIX: Ensure scanCode is valid using MapVirtualKeyW fallback
+                let mut scan_code = kbd.scanCode as u16;
+                if scan_code == 0 {
+                    scan_code = MapVirtualKeyW(kbd.vkCode, MAPVK_VK_TO_VSC) as u16;
+                }
+
+                // Handle Left/Right Ctrl identification explicitly
+                let is_left_ctrl = kbd.vkCode == VK_LCONTROL as u32 || (kbd.vkCode == VK_CONTROL as u32 && !is_extended);
+                let is_right_ctrl = kbd.vkCode == VK_RCONTROL as u32 || (kbd.vkCode == VK_CONTROL as u32 && is_extended);
 
                 let event = KeyEvent::new(
                     scan_code,
@@ -204,19 +219,34 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
                 if let Ok(mut guard) = ENGINE_STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        // Use default engine (or device-specific if identified)
                         let dev_engine = &mut state.default_engine;
 
                         // 1. Process Ctrl single-tap IME gesture
-                        let tap_res = dev_engine.tap_tracker.process_event(&event);
-                        match tap_res {
-                            TapResult::LeftCtrlTap => {
-                                trigger_ime = Some((false, state.config.ime.method));
+                        if is_left_ctrl || is_right_ctrl || scan_code == 0x1D {
+                            // Synthesize exact L/R Ctrl event for tap tracker
+                            let tap_event = KeyEvent::new(
+                                if is_left_ctrl { 0x1D } else { 0x1D },
+                                event.direction,
+                                KeyFlags {
+                                    is_extended: is_right_ctrl,
+                                    is_extended1: false,
+                                },
+                                kbd.time,
+                            );
+
+                            let tap_res = dev_engine.tap_tracker.process_event(&tap_event);
+                            match tap_res {
+                                TapResult::LeftCtrlTap => {
+                                    trigger_ime = Some((false, state.config.ime.method));
+                                }
+                                TapResult::RightCtrlTap => {
+                                    trigger_ime = Some((true, state.config.ime.method));
+                                }
+                                TapResult::None => {}
                             }
-                            TapResult::RightCtrlTap => {
-                                trigger_ime = Some((true, state.config.ime.method));
-                            }
-                            TapResult::None => {}
+                        } else {
+                            // Any other key resets / cancels tap
+                            dev_engine.tap_tracker.process_event(&event);
                         }
 
                         // 2. Process Layout Remapping
@@ -227,15 +257,15 @@ unsafe extern "system" fn low_level_keyboard_proc(
                                     if is_down {
                                         let out_desc: Vec<String> = evts.iter().map(|e| format!("0x{:02X}", e.scan_code)).collect();
                                         activity_info = Some((
-                                            "All Active Keyboards".to_string(),
-                                            format!("Code 0x{:02X} -> Remapped to [{}]", scan_code, out_desc.join(", ")),
+                                            "Keyboard Input".to_string(),
+                                            format!("VK:0x{:02X} Code:0x{:02X} -> Remapped to [{}]", kbd.vkCode, scan_code, out_desc.join(", ")),
                                         ));
                                     }
                                     remapped_events = Some(evts);
                                 } else if is_down {
                                     activity_info = Some((
-                                        "All Active Keyboards".to_string(),
-                                        format!("Code 0x{:02X} -> Pass-through", scan_code),
+                                        "Keyboard Input".to_string(),
+                                        format!("VK:0x{:02X} Code:0x{:02X} (Pass-through)", kbd.vkCode, scan_code),
                                     ));
                                 }
                             }
@@ -266,8 +296,8 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     if let Ok(cb_guard) = ACTIVITY_CALLBACK.lock() {
                         if let Some(cb) = cb_guard.as_ref() {
                             cb(
-                                "All Active Keyboards".to_string(),
-                                format!("Ctrl Tap Detected -> IME {}", if on { "ON" } else { "OFF" }),
+                                "Ctrl Tap Detected".to_string(),
+                                format!("IME switched to {}", if on { "ON (Japanese)" } else { "OFF (English)" }),
                             );
                         }
                     }

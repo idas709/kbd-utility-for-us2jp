@@ -12,3 +12,33 @@ instance_id = 'ACPI\MSF0001\4&3488ffef&0'
 name = "Standard PS/2 Keyboard (Internal Laptop)"
 layout_mode = "us-to-jis"
 ctrl_ime_enabled = true
+
+[[devices]]
+instance_id = 'Microsoft Keyboard RID\0'
+name = 'Keyboard (Microsoft Keyboard RID\0)'
+layout_mode = "us-to-jis"
+ctrl_ime_enabled = true
+
+[[devices]]
+instance_id = 'HID\ConvertedDevice&Col01\5&32cf90e6&0&0000'
+name = "HID Keyboard Device"
+layout_mode = "us-to-jis"
+ctrl_ime_enabled = true
+
+[[devices]]
+instance_id = 'HID\ConvertedDevice&Col01\5&2cf12849&0&0000'
+name = "HID Keyboard Device"
+layout_mode = "us-to-jis"
+ctrl_ime_enabled = true
+
+[[devices]]
+instance_id = 'HID\INT33D2&Col01\6&231babf5&0&0000'
+name = "HID Keyboard Device"
+layout_mode = "passthrough"
+ctrl_ime_enabled = true
+
+[[devices]]
+instance_id = 'HID\VID_2BE8&PID_0004&MI_00\7&2dc37484&0&0000'
+name = "HID Keyboard Device [VID:2BE8 PID:0004]"
+layout_mode = "passthrough"
+ctrl_ime_enabled = true
