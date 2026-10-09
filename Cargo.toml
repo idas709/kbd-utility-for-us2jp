@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hid-remap-core",
+    "crates/hid-remap-device",
+    "crates/hid-remap-ime",
+    "crates/hid-remap-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["HID Keyboard Layout Remapper Team"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+windows-sys = { version = "0.59" }
+

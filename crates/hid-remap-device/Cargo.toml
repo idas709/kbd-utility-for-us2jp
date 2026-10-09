@@ -1,0 +1,22 @@
+[package]
+name = "hid-remap-device"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "HID keyboard device enumeration and identification on Windows"
+
+[dependencies]
+hid-remap-core = { path = "../hid-remap-core" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Storage_FileSystem",
+] }
+

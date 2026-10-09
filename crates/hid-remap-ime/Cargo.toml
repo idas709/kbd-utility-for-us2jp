@@ -1,0 +1,18 @@
+[package]
+name = "hid-remap-ime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Windows IME switching via IMM32 and key events"
+
+[dependencies]
+hid-remap-core = { path = "../hid-remap-core" }
+tracing = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Ime",
+] }
+

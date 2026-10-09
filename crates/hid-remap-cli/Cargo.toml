@@ -1,0 +1,15 @@
+[package]
+name = "hid-remap-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Diagnostic CLI for testing HID remapping, device enumeration and IME switching"
+
+[dependencies]
+hid-remap-core = { path = "../hid-remap-core" }
+hid-remap-device = { path = "../hid-remap-device" }
+hid-remap-ime = { path = "../hid-remap-ime" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+

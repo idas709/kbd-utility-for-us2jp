@@ -1,0 +1,14 @@
+[general]
+enabled = true
+windows_layout = "jis106"
+start_with_windows = true
+
+[ime]
+method = "imm"
+tap_timeout_ms = 1000
+
+[[devices]]
+instance_id = 'HID\VID_046D&PID_C31C\EXAMPLE'
+name = "My US Mechanical Keyboard"
+layout_mode = "us-to-jis"
+ctrl_ime_enabled = true
