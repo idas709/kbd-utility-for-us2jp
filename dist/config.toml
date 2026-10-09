@@ -40,5 +40,5 @@ ctrl_ime_enabled = true
 [[devices]]
 instance_id = 'HID\VID_2BE8&PID_0004&MI_00\7&2dc37484&0&0000'
 name = "HID Keyboard Device [VID:2BE8 PID:0004]"
-layout_mode = "passthrough"
+layout_mode = "us-to-jis"
 ctrl_ime_enabled = true

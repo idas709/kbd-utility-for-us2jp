@@ -212,8 +212,8 @@ impl RemapEngine {
 
 fn is_modifier_key(scan_code: ScanCode, flags: KeyFlags) -> bool {
     match (scan_code, flags.is_extended) {
-        (LSHIFT, false)
-        | (RSHIFT, false)
+        (LSHIFT, _)
+        | (RSHIFT, _)
         | (LCTRL, false)
         | (RCTRL, true)
         | (LALT, false)

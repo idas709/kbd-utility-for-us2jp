@@ -1,6 +1,7 @@
 use hid_remap_core::config::{AppConfig, LayoutMode};
 use hid_remap_core::engine::{EngineAction, RemapEngine};
 use hid_remap_core::ime::{CtrlTapTracker, TapResult};
+use hid_remap_core::keyboard::scancodes::*;
 use hid_remap_core::keyboard::{KeyDirection, KeyEvent, KeyFlags};
 use hid_remap_ime::{switch_ime, EXTRA_INFO_MAGIC};
 use std::collections::HashMap;
@@ -82,20 +83,19 @@ fn update_engine_state(config: AppConfig) {
     let mut device_engines = HashMap::new();
     let timeout = config.ime.tap_timeout_ms;
 
-    // Determine the active mode: check all configured devices.
-    // If any real device has UsToJis, use UsToJis as active default mode.
-    let default_mode = config
-        .devices
-        .iter()
-        .find(|d| d.layout_mode != LayoutMode::Passthrough)
-        .map(|d| d.layout_mode)
-        .or_else(|| config.devices.first().map(|d| d.layout_mode))
-        .unwrap_or(LayoutMode::UsToJis);
+    // Determine active layout mode:
+    // If any device is explicitly configured to UsToJis or JisToUs, use that mode!
+    // Otherwise, fallback to config.general.default_layout_mode.
+    let active_mode = if let Some(dev) = config.devices.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+        dev.layout_mode
+    } else {
+        config.general.default_layout_mode
+    };
 
     let default_ctrl_ime = config
         .devices
         .iter()
-        .any(|d| d.ctrl_ime_enabled);
+        .any(|d| d.ctrl_ime_enabled) || true;
 
     for dev in &config.devices {
         device_engines.insert(
@@ -104,7 +104,7 @@ fn update_engine_state(config: AppConfig) {
         );
     }
 
-    let default_engine = create_engine_for_mode(default_mode, default_ctrl_ime, timeout);
+    let default_engine = create_engine_for_mode(active_mode, default_ctrl_ime, timeout);
 
     let mut guard = ENGINE_STATE.lock().unwrap();
     *guard = Some(EngineSharedState {
@@ -112,7 +112,7 @@ fn update_engine_state(config: AppConfig) {
         default_engine,
         config,
     });
-    info!("Engine updated. Active Default Mode: {:?}, Ctrl IME: {}", default_mode, default_ctrl_ime);
+    info!("Engine updated. Active Layout Mode: {:?}, Ctrl IME: {}", active_mode, default_ctrl_ime);
 }
 
 pub fn stop_standalone_engine() {
@@ -124,6 +124,67 @@ pub fn stop_standalone_engine() {
             *handle = 0;
             info!("Standalone input engine hook removed.");
         }
+    }
+}
+
+fn friendly_key_name(scan_code: u16, is_shift: bool) -> &'static str {
+    match (scan_code, is_shift) {
+        (KEY_2, true) => "Shift + 2 (@)",
+        (KEY_2, false) => "2",
+        (KEY_6, true) => "Shift + 6 (^)",
+        (KEY_6, false) => "6",
+        (KEY_7, true) => "Shift + 7 (&)",
+        (KEY_7, false) => "7",
+        (KEY_8, true) => "Shift + 8 (*)",
+        (KEY_8, false) => "8",
+        (KEY_9, true) => "Shift + 9 ( ( )",
+        (KEY_9, false) => "9",
+        (KEY_0, true) => "Shift + 0 ( ) )",
+        (KEY_0, false) => "0",
+        (MINUS, true) => "Shift + - (_)",
+        (MINUS, false) => "-",
+        (EQUALS, true) => "Shift + = (+)",
+        (EQUALS, false) => "= (Equals)",
+        (LBRACKET, true) => "Shift + [ ({)",
+        (LBRACKET, false) => "[ (Left Bracket)",
+        (RBRACKET, true) => "Shift + ] (})",
+        (RBRACKET, false) => "] (Right Bracket)",
+        (SEMICOLON, true) => "Shift + ; (:)",
+        (SEMICOLON, false) => "; (Semicolon)",
+        (APOSTROPHE, true) => "Shift + ' (\")",
+        (APOSTROPHE, false) => "' (Apostrophe)",
+        (GRAVE, true) => "Shift + ` (~)",
+        (GRAVE, false) => "` (Backtick)",
+        (BACKSLASH, true) => "Shift + \\ (|)",
+        (BACKSLASH, false) => "\\ (Backslash)",
+        (LSHIFT, _) => "Left Shift",
+        (RSHIFT, _) => "Right Shift",
+        (LCTRL, _) => "Left Ctrl",
+        (LALT, _) => "Left Alt",
+        (SPACE, _) => "Space",
+        (ENTER, _) => "Enter",
+        _ => "Key",
+    }
+}
+
+fn friendly_scancode_desc(scan_code: u16) -> String {
+    match scan_code {
+        LBRACKET => "JIS '@' (0x1A)".to_string(),
+        EQUALS => "JIS '^' (0x0D)".to_string(),
+        KEY_6 => "JIS '&' (0x07)".to_string(),
+        APOSTROPHE => "JIS '*' (0x28)".to_string(),
+        KEY_8 => "JIS '(' (0x09)".to_string(),
+        KEY_9 => "JIS ')' (0x0A)".to_string(),
+        JIS_RO => "JIS '_' (0x73 ろ)".to_string(),
+        MINUS => "JIS '=' (0x0C)".to_string(),
+        SEMICOLON => "JIS '+' (0x27)".to_string(),
+        RBRACKET => "JIS '[' (0x1B)".to_string(),
+        BACKSLASH => "JIS ']' (0x2B)".to_string(),
+        JIS_YEN => "JIS '¥ / |' (0x7D)".to_string(),
+        KEY_7 => "JIS ''' (0x08)".to_string(),
+        KEY_2 => "JIS '\"' (0x03)".to_string(),
+        LSHIFT => "Shift".to_string(),
+        _ => format!("0x{:02X}", scan_code),
     }
 }
 
@@ -176,7 +237,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
     if n_code >= 0 {
         let kbd = &*(l_param as *const KBDLLHOOKSTRUCT);
 
-        // Ignore our own synthetic inputs to prevent feedback loops
+        // Ignore synthetic inputs to prevent feedback loops
         if kbd.dwExtraInfo == EXTRA_INFO_MAGIC {
             return CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
         }
@@ -189,10 +250,10 @@ unsafe extern "system" fn low_level_keyboard_proc(
             if is_down || is_up {
                 let is_extended = (kbd.flags & LLKHF_EXTENDED) != 0;
 
-                // CRITICAL FIX: Ensure scanCode is valid using MapVirtualKeyW fallback
-                let mut scan_code = kbd.scanCode as u16;
+                // Ensure scanCode is valid using MapVirtualKeyW fallback
+                let mut scan_code = (kbd.scanCode & 0xFF) as u16;
                 if scan_code == 0 {
-                    scan_code = MapVirtualKeyW(kbd.vkCode, MAPVK_VK_TO_VSC) as u16;
+                    scan_code = (MapVirtualKeyW(kbd.vkCode, MAPVK_VK_TO_VSC) & 0xFF) as u16;
                 }
 
                 // Handle Left/Right Ctrl identification explicitly
@@ -223,9 +284,8 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
                         // 1. Process Ctrl single-tap IME gesture
                         if is_left_ctrl || is_right_ctrl || scan_code == 0x1D {
-                            // Synthesize exact L/R Ctrl event for tap tracker
                             let tap_event = KeyEvent::new(
-                                if is_left_ctrl { 0x1D } else { 0x1D },
+                                0x1D,
                                 event.direction,
                                 KeyFlags {
                                     is_extended: is_right_ctrl,
@@ -250,22 +310,38 @@ unsafe extern "system" fn low_level_keyboard_proc(
                         }
 
                         // 2. Process Layout Remapping
+                        let is_shift_active = dev_engine.engine.modifiers.is_shift();
+                        let key_desc = friendly_key_name(scan_code, is_shift_active);
+
                         let action = dev_engine.engine.process(event);
                         match action {
                             EngineAction::Emit(evts) => {
                                 if evts.len() != 1 || evts[0] != event {
                                     if is_down {
-                                        let out_desc: Vec<String> = evts.iter().map(|e| format!("0x{:02X}", e.scan_code)).collect();
+                                        let out_desc: Vec<String> = evts
+                                            .iter()
+                                            .filter(|e| e.is_down() && e.scan_code != LSHIFT)
+                                            .map(|e| friendly_scancode_desc(e.scan_code))
+                                            .collect();
                                         activity_info = Some((
                                             "Keyboard Input".to_string(),
-                                            format!("VK:0x{:02X} Code:0x{:02X} -> Remapped to [{}]", kbd.vkCode, scan_code, out_desc.join(", ")),
+                                            format!("✔ REMAPPED: {} -> Output: [{}]", key_desc, out_desc.join(", ")),
                                         ));
                                     }
                                     remapped_events = Some(evts);
                                 } else if is_down {
+                                    // Passthrough notification
+                                    let char_hint = if kbd.vkCode >= 0x41 && kbd.vkCode <= 0x5A {
+                                        format!("'{}'", (kbd.vkCode as u8) as char)
+                                    } else if kbd.vkCode >= 0x30 && kbd.vkCode <= 0x39 && !is_shift_active {
+                                        format!("'{}'", (kbd.vkCode as u8) as char)
+                                    } else {
+                                        key_desc.to_string()
+                                    };
+
                                     activity_info = Some((
                                         "Keyboard Input".to_string(),
-                                        format!("VK:0x{:02X} Code:0x{:02X} (Pass-through)", kbd.vkCode, scan_code),
+                                        format!("Passthrough: {} (US & JIS share same key)", char_hint),
                                     ));
                                 }
                             }
@@ -297,7 +373,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                         if let Some(cb) = cb_guard.as_ref() {
                             cb(
                                 "Ctrl Tap Detected".to_string(),
-                                format!("IME switched to {}", if on { "ON (Japanese)" } else { "OFF (English)" }),
+                                format!("✔ IME SWITCHED: Set IME to {}", if on { "ON (Japanese)" } else { "OFF (English)" }),
                             );
                         }
                     }

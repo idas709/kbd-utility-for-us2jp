@@ -190,8 +190,8 @@ impl ModifierState {
         let ext = event.flags.is_extended;
 
         match (event.scan_code, ext) {
-            (scancodes::LSHIFT, false) => self.lshift = is_down,
-            (scancodes::RSHIFT, false) => self.rshift = is_down,
+            (scancodes::LSHIFT, _) => self.lshift = is_down,
+            (scancodes::RSHIFT, _) => self.rshift = is_down,
             (scancodes::LCTRL, false) => self.lctrl = is_down,
             (scancodes::RCTRL, true) => self.rctrl = is_down,
             (scancodes::LALT, false) => self.lalt = is_down,

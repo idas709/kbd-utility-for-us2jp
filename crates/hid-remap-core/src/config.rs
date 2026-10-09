@@ -68,6 +68,12 @@ pub struct GeneralConfig {
     pub windows_layout: String,
     #[serde(default = "default_true")]
     pub start_with_windows: bool,
+    #[serde(default = "default_us_to_jis")]
+    pub default_layout_mode: LayoutMode,
+}
+
+fn default_us_to_jis() -> LayoutMode {
+    LayoutMode::UsToJis
 }
 
 impl Default for GeneralConfig {
@@ -76,6 +82,7 @@ impl Default for GeneralConfig {
             enabled: true,
             windows_layout: default_windows_layout(),
             start_with_windows: true,
+            default_layout_mode: LayoutMode::UsToJis,
         }
     }
 }

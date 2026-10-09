@@ -57,6 +57,9 @@ fn main() -> Result<(), slint::PlatformError> {
             initial_config.upsert_device(new_dev);
         }
     }
+    if let Some(active_dev) = initial_config.devices.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+        initial_config.general.default_layout_mode = active_dev.layout_mode;
+    }
     let _ = initial_config.save_to_file("config.toml");
 
     let config = Rc::new(RefCell::new(initial_config));
@@ -155,6 +158,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     new_dev.ctrl_ime_enabled = item.ctrl_ime_enabled;
                     conf.upsert_device(new_dev);
                 }
+                conf.general.default_layout_mode = mode;
                 update_engine_config(conf.clone());
                 let _ = conf.save_to_file("config.toml");
                 info!("Updated layout mode for {}: {}", item.name, mode_str);
@@ -205,7 +209,10 @@ fn main() -> Result<(), slint::PlatformError> {
     main_window.on_save_configuration({
         let config = config.clone();
         move || {
-            let conf = config.borrow();
+            let mut conf = config.borrow_mut();
+            if let Some(active_dev) = conf.devices.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+                conf.general.default_layout_mode = active_dev.layout_mode;
+            }
             let save_res = conf.save_to_file("config.toml");
             update_engine_config(conf.clone());
 
@@ -214,7 +221,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     Ok(_) => {
                         let active_count = conf.devices.iter().filter(|d| d.layout_mode != LayoutMode::Passthrough).count();
                         window.set_save_toast_text(SharedString::from(format!(
-                            "✔ Settings Saved & Applied! (Active Remapped Keyboards: {})",
+                            "✔ Settings Saved & Applied! (Mode: {:?}, Active Keyboards: {})",
+                            conf.general.default_layout_mode,
                             active_count
                         )));
                         window.set_show_save_toast(true);
