@@ -2,7 +2,7 @@
 enabled = true
 windows_layout = "jis106"
 start_with_windows = false
-default_layout_mode = "us-to-jis"
+default_layout_mode = "passthrough"
 
 [ime]
 method = "imm"

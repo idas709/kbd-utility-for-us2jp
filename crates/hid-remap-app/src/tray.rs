@@ -5,9 +5,13 @@ use std::sync::Mutex;
 use tracing::info;
 use windows_sys::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Threading::{
+    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+};
 use windows_sys::Win32::UI::Input::{
-    GetRawInputData, GetRawInputDeviceInfoW, RegisterRawInputDevices, HRAWINPUT,
-    RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIDI_DEVICENAME,
+    GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
+    HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER, RIDEV_INPUTSINK,
+    RID_INPUT, RIDI_DEVICENAME, RIM_TYPEKEYBOARD,
 };
 use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
@@ -23,6 +27,25 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 static DEVICE_CACHE: Mutex<Option<HashMap<isize, String>>> = Mutex::new(None);
+
+pub fn populate_device_cache() {
+    let mut num_devices: u32 = 0;
+    let struct_size = std::mem::size_of::<RAWINPUTDEVICELIST>() as u32;
+    unsafe {
+        let res = GetRawInputDeviceList(std::ptr::null_mut(), &mut num_devices, struct_size);
+        if res != u32::MAX && num_devices > 0 {
+            let mut list: Vec<RAWINPUTDEVICELIST> = vec![std::mem::zeroed(); num_devices as usize];
+            let actual = GetRawInputDeviceList(list.as_mut_ptr(), &mut num_devices, struct_size);
+            if actual != u32::MAX {
+                for dev in list.into_iter().take(actual as usize) {
+                    if dev.dwType == RIM_TYPEKEYBOARD && !dev.hDevice.is_null() {
+                        let _ = resolve_device_instance_id(dev.hDevice);
+                    }
+                }
+            }
+        }
+    }
+}
 
 fn resolve_device_instance_id(h_device: HANDLE) -> Option<String> {
     let key = h_device as isize;
@@ -222,25 +245,22 @@ unsafe extern "system" fn tray_wnd_proc(
         }
         WM_INPUT => {
             let hraw = l_param as HRAWINPUT;
-            let mut size: u32 = 0;
+            let mut buffer = [0u8; 128];
+            let mut size = buffer.len() as u32;
             let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
-            GetRawInputData(hraw, RID_INPUT, std::ptr::null_mut(), &mut size, header_size);
-            if size > 0 {
-                let mut buffer: Vec<u8> = vec![0; size as usize];
-                if GetRawInputData(
-                    hraw,
-                    RID_INPUT,
-                    buffer.as_mut_ptr() as *mut _,
-                    &mut size,
-                    header_size,
-                ) == size
-                {
-                    let raw = &*(buffer.as_ptr() as *const RAWINPUT);
-                    let h_device = raw.header.hDevice;
-                    if !h_device.is_null() {
-                        if let Some(instance_id) = resolve_device_instance_id(h_device) {
-                            crate::standalone_engine::set_last_typed_device(instance_id);
-                        }
+            let res = GetRawInputData(
+                hraw,
+                RID_INPUT,
+                buffer.as_mut_ptr() as *mut _,
+                &mut size,
+                header_size,
+            );
+            if res != u32::MAX && res > 0 {
+                let raw = &*(buffer.as_ptr() as *const RAWINPUT);
+                let h_device = raw.header.hDevice;
+                if !h_device.is_null() {
+                    if let Some(instance_id) = resolve_device_instance_id(h_device) {
+                        crate::standalone_engine::set_last_typed_device(instance_id);
                     }
                 }
             }
@@ -314,6 +334,8 @@ unsafe fn show_tray_menu(hwnd: HWND) {
 
 fn run_tray_thread() {
     unsafe {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
         let hinstance = GetModuleHandleW(std::ptr::null());
         let class_name = to_wide("HIDRemapTrayWindowClass");
 

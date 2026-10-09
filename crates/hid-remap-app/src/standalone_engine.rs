@@ -317,6 +317,10 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
                 if let Ok(mut guard) = ENGINE_STATE.lock() {
                     if let Some(state) = guard.as_mut() {
+                        if is_down {
+                            std::thread::yield_now();
+                        }
+
                         let active_id = if is_down {
                             let cur_id = get_last_typed_device();
                             if let Some(ref id) = cur_id {
@@ -329,17 +333,31 @@ unsafe extern "system" fn low_level_keyboard_proc(
                             state.key_owners.remove(&scan_code).or_else(get_last_typed_device)
                         };
 
+                        let find_engine_key = |id: &str, engines: &HashMap<String, DeviceEngine>| -> Option<String> {
+                            let upper = id.to_uppercase();
+                            if engines.contains_key(&upper) {
+                                return Some(upper);
+                            }
+                            if let (Some(vid), Some(pid)) = hid_remap_device::parse_vid_pid(id) {
+                                let tag = format!("VID_{:04X}&PID_{:04X}", vid, pid);
+                                if let Some(key) = engines.keys().find(|k| k.contains(&tag)) {
+                                    return Some(key.clone());
+                                }
+                            }
+                            None
+                        };
+
                         let target_engine_key: Option<String> = if is_up {
                             if let Some(ref id) = active_id {
-                                let upper = id.to_uppercase();
-                                if state.device_engines.get(&upper).map_or(false, |de| de.engine.has_active_key(scan_code)) {
-                                    Some(upper)
+                                let resolved = find_engine_key(id, &state.device_engines).unwrap_or_else(|| id.to_uppercase());
+                                if state.device_engines.get(&resolved).map_or(false, |de| de.engine.has_active_key(scan_code)) {
+                                    Some(resolved)
                                 } else if state.default_engine.engine.has_active_key(scan_code) {
                                     None
                                 } else if let Some((other_key, _)) = state.device_engines.iter().find(|(_, de)| de.engine.has_active_key(scan_code)) {
                                     Some(other_key.clone())
                                 } else {
-                                    Some(upper)
+                                    Some(resolved)
                                 }
                             } else if state.default_engine.engine.has_active_key(scan_code) {
                                 None
@@ -349,7 +367,8 @@ unsafe extern "system" fn low_level_keyboard_proc(
                                 None
                             }
                         } else {
-                            active_id.as_ref().map(|id| id.to_uppercase())
+                            active_id.as_deref().and_then(|id| find_engine_key(id, &state.device_engines))
+                                .or_else(|| active_id.as_ref().map(|id| id.to_uppercase()))
                         };
 
                         let (dev_engine, dev_label) = if let Some(ref upper) = target_engine_key {

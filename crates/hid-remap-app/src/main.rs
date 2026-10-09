@@ -194,6 +194,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
                 let items = build_device_items(&scanned);
                 dev_model_pnp.set_vec(items);
+                tray::populate_device_cache();
                 update_engine_config(current_conf, &current_ids);
             }
         },
@@ -363,6 +364,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let new_items = build_device_items(&scanned);
             dev_model.set_vec(new_items);
             let connected_ids: Vec<String> = scanned.iter().filter(|d| d.is_connected).map(|d| d.instance_id.clone()).collect();
+            tray::populate_device_cache();
             update_engine_config(conf.clone(), &connected_ids);
             let _ = conf.save_to_file("config.toml");
             info!("Manually refreshed keyboard devices ({} found)", scanned.len());
@@ -446,6 +448,7 @@ fn main() -> Result<(), slint::PlatformError> {
         tray_initial_enabled,
         tray_initial_startup,
     );
+    tray::populate_device_cache();
 
     // Check launch arguments: if --show is passed, show settings window on start!
     let args: Vec<String> = std::env::args().collect();
