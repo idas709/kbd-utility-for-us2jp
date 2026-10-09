@@ -2,6 +2,7 @@
 enabled = true
 windows_layout = "jis106"
 start_with_windows = true
+default_layout_mode = "us-to-jis"
 
 [ime]
 method = "imm"
@@ -39,6 +40,12 @@ ctrl_ime_enabled = true
 
 [[devices]]
 instance_id = 'HID\VID_2BE8&PID_0004&MI_00\7&2dc37484&0&0000'
+name = "HID Keyboard Device [VID:2BE8 PID:0004]"
+layout_mode = "us-to-jis"
+ctrl_ime_enabled = true
+
+[[devices]]
+instance_id = 'HID\VID_2BE8&PID_0004&MI_00\7&df3a05b&0&0000'
 name = "HID Keyboard Device [VID:2BE8 PID:0004]"
 layout_mode = "us-to-jis"
 ctrl_ime_enabled = true

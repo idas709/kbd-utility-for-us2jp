@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export struct DeviceItem {
     name: string,
@@ -9,16 +9,115 @@ export struct DeviceItem {
     is_active_typing: bool,    // whether key was recently pressed on this keyboard
 }
 
+component ActionBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+
+    height: 36px;
+    border-radius: 6px;
+    background: primary ? (touch.has-hover ? #106ebe : #0078d4) : (touch.has-hover ? #e9ecef : #f8f9fa);
+    border-width: 1px;
+    border-color: primary ? #005a9e : #ced4da;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.text;
+        font-size: 13px;
+        font-weight: 600;
+        color: primary ? #ffffff : #212529;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component ModePill inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected: false;
+    callback clicked();
+
+    height: 28px;
+    border-radius: 4px;
+    background: selected ? #0078d4 : (touch.has-hover ? #e2e6ea : #ffffff);
+    border-width: 1.5px;
+    border-color: selected ? #005a9e : #cccccc;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.text;
+        font-size: 11px;
+        font-weight: selected ? 700 : 600;
+        color: selected ? #ffffff : #333333;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component CustomCheckBox inherits HorizontalLayout {
+    in property <string> text;
+    in-out property <bool> checked: false;
+    callback toggled(bool);
+
+    spacing: 8px;
+    alignment: start;
+
+    box := Rectangle {
+        width: 18px;
+        height: 18px;
+        border-radius: 3px;
+        background: root.checked ? #0078d4 : #ffffff;
+        border-width: 1.5px;
+        border-color: root.checked ? #005a9e : #666666;
+
+        if root.checked : Text {
+            text: "✔";
+            font-size: 11px;
+            font-weight: 700;
+            color: #ffffff;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+            }
+        }
+    }
+
+    Text {
+        text: root.text;
+        font-size: 12px;
+        font-weight: 500;
+        color: #212529;
+        vertical-alignment: center;
+
+        TouchArea {
+            clicked => {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "HID Keyboard Layout Remapper (Standalone)";
-    preferred-width: 860px;
-    preferred-height: 640px;
-    min-width: 760px;
-    min-height: 540px;
-    background: #f3f3f3;
+    preferred-width: 960px;
+    preferred-height: 660px;
+    min-width: 840px;
+    min-height: 560px;
+    background: #f4f5f7;
 
     in-out property <bool> global_enabled: true;
-    in-out property <string> engine_status: "Standalone Engine: Active";
+    in-out property <string> engine_status: "Standalone Engine: Active (Zero Install & Hotplug Detection)";
     in-out property <string> live_input_log: "Press keys to test remapping and IME switching...";
     in-out property <string> save_toast_text: "";
     in-out property <bool> show_save_toast: false;
@@ -32,16 +131,16 @@ export component MainWindow inherits Window {
     callback hide_window();
 
     VerticalLayout {
-        padding: 18px;
+        padding: 16px;
         spacing: 12px;
 
-        // Header bar with status and Global switch
+        // Header Card
         Rectangle {
             background: #ffffff;
             border-radius: 8px;
             drop-shadow-blur: 4px;
             drop-shadow-color: #00000015;
-            height: 72px;
+            height: 74px;
 
             HorizontalLayout {
                 padding-left: 20px;
@@ -54,11 +153,12 @@ export component MainWindow inherits Window {
                         text: "HID Keyboard Layout Remapper";
                         font-size: 18px;
                         font-weight: 700;
-                        color: #1a1a1a;
+                        color: #111111;
                     }
                     Text {
                         text: engine_status;
                         font-size: 12px;
+                        font-weight: 500;
                         color: #0078d4;
                     }
                 }
@@ -67,89 +167,77 @@ export component MainWindow inherits Window {
                     alignment: center;
                     spacing: 12px;
 
-                    CheckBox {
-                        text: "Remap Active";
-                        checked <=> root.global_enabled;
-                        toggled => { root.toggle_global_enabled(self.checked); }
+                    CustomCheckBox {
+                        text: "リマップ有効";
+                        checked: root.global_enabled;
+                        toggled(val) => { root.toggle_global_enabled(val); }
                     }
 
-                    Button {
-                        text: "Refresh";
+                    ActionBtn {
+                        width: 90px;
+                        text: "🔄 再検出";
+                        primary: false;
                         clicked => { root.refresh_devices(); }
                     }
 
-                    Button {
-                        text: "Save & Apply";
+                    ActionBtn {
+                        width: 140px;
+                        text: "💾 Save & Apply";
                         primary: true;
                         clicked => { root.save_configuration(); }
                     }
 
-                    Button {
-                        text: "Hide to Tray";
+                    ActionBtn {
+                        width: 80px;
+                        text: "最小化";
+                        primary: false;
                         clicked => { root.hide_window(); }
                     }
                 }
             }
         }
 
-        // Save & Apply Toast Banner (shown when save_configuration is triggered)
-        if root.show_save_toast : Rectangle {
-            background: #d4edda;
+        // Live Monitor / Save Toast Unified Banner
+        Rectangle {
+            background: root.show_save_toast ? #d4edda : #e7f3ff;
             border-radius: 6px;
-            border-width: 1px;
-            border-color: #28a745;
-            height: 40px;
+            border-width: 1.5px;
+            border-color: root.show_save_toast ? #28a745 : #0078d4;
+            height: 44px;
 
             HorizontalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
                 alignment: space-between;
 
-                VerticalLayout {
-                    alignment: center;
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 10px;
+
                     Text {
-                        text: root.save_toast_text;
+                        text: root.show_save_toast ? "✔ 保存ステータス:" : "Live Monitor:";
                         font-size: 13px;
                         font-weight: 700;
-                        color: #155724;
+                        color: root.show_save_toast ? #155724 : #004578;
+                        vertical-alignment: center;
                     }
-                }
-            }
-        }
 
-        // Live Key Monitor Banner
-        Rectangle {
-            background: #e7f3ff;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: #0078d4;
-            height: 44px;
-
-            HorizontalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                spacing: 10px;
-                alignment: start;
-
-                VerticalLayout {
-                    alignment: center;
                     Text {
-                        text: "Live Monitor:";
-                        font-size: 12px;
-                        font-weight: 700;
-                        color: #004578;
-                    }
-                }
-
-                VerticalLayout {
-                    alignment: center;
-                    Text {
-                        text: live_input_log;
-                        font-size: 12px;
-                        font-weight: 500;
-                        color: #106ebe;
+                        text: root.show_save_toast ? root.save_toast_text : root.live_input_log;
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: root.show_save_toast ? #155724 : #106ebe;
+                        vertical-alignment: center;
                         overflow: elide;
                     }
+                }
+
+                if root.show_save_toast : Text {
+                    text: "[ 設定反映完了 / Applied ]";
+                    font-size: 12px;
+                    font-weight: 700;
+                    color: #155724;
+                    vertical-alignment: center;
                 }
             }
         }
@@ -168,60 +256,60 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     alignment: space-between;
                     Text {
-                        text: "Connected Keyboards (" + root.devices.length + ")";
+                        text: "接続中のキーボード (" + root.devices.length + "台)";
                         font-size: 15px;
-                        font-weight: 600;
-                        color: #333333;
+                        font-weight: 700;
+                        color: #212529;
                     }
                     Text {
-                        text: "Plug or unplug keyboards to auto-update. Select mode below.";
-                        font-size: 11px;
-                        color: #666666;
+                        text: "キーボードごとにボタンをクリックして配列変換モードを選択してください（即時反映）";
+                        font-size: 12px;
+                        color: #6c757d;
                     }
                 }
 
                 ScrollView {
                     VerticalLayout {
-                        spacing: 8px;
+                        spacing: 10px;
 
                         for dev[idx] in root.devices: Rectangle {
-                            background: dev.is_active_typing ? #e6f4ea : (dev.is_connected ? #f8f9fa : #efefef);
+                            background: dev.is_active_typing ? #e6f4ea : #f8f9fa;
                             border-radius: 6px;
                             border-width: dev.is_active_typing ? 2px : 1px;
-                            border-color: dev.is_active_typing ? #137333 : (dev.is_connected ? #0078d4 : #cccccc);
-                            height: 68px;
+                            border-color: dev.is_active_typing ? #137333 : #dee2e6;
+                            height: 76px;
 
                             HorizontalLayout {
-                                padding-left: 14px;
-                                padding-right: 14px;
+                                padding-left: 16px;
+                                padding-right: 16px;
                                 alignment: space-between;
 
                                 // Left: Device info
                                 VerticalLayout {
                                     alignment: center;
-                                    width: 360px;
+                                    width: 380px;
 
                                     HorizontalLayout {
                                         spacing: 8px;
                                         Text {
                                             text: dev.name;
                                             font-size: 14px;
-                                            font-weight: 600;
+                                            font-weight: 700;
                                             color: #111111;
                                             overflow: elide;
                                         }
                                         Text {
-                                            text: dev.is_connected ? "[Connected]" : "[Disconnected]";
+                                            text: dev.is_connected ? "[接続中]" : "[切断]";
                                             font-size: 11px;
-                                            font-weight: dev.is_active_typing ? 700 : 400;
-                                            color: dev.is_connected ? #008000 : #888888;
+                                            font-weight: 700;
+                                            color: dev.is_connected ? #198754 : #6c757d;
                                         }
                                     }
 
                                     Text {
                                         text: dev.instance_id;
                                         font-size: 11px;
-                                        color: #666666;
+                                        color: #6c757d;
                                         overflow: elide;
                                     }
                                 }
@@ -229,37 +317,69 @@ export component MainWindow inherits Window {
                                 // Right: Controls
                                 HorizontalLayout {
                                     alignment: center;
-                                    spacing: 16px;
+                                    spacing: 20px;
 
+                                    // Layout Mode Segmented Pill Buttons
                                     VerticalLayout {
                                         alignment: center;
+                                        spacing: 4px;
+
                                         Text {
-                                            text: "Layout Mode:";
+                                            text: "配列変換モード (Layout):";
                                             font-size: 11px;
-                                            color: #555555;
+                                            font-weight: 600;
+                                            color: #495057;
                                         }
-                                        ComboBox {
-                                            width: 130px;
-                                            model: ["passthrough", "us-to-jis", "jis-to-us"];
-                                            current-value: dev.layout_mode;
-                                            selected(val) => {
-                                                root.change_device_layout(idx, val);
+
+                                        HorizontalLayout {
+                                            spacing: 4px;
+
+                                            ModePill {
+                                                width: 82px;
+                                                text: "US → JIS";
+                                                selected: dev.layout_mode == "us-to-jis";
+                                                clicked => {
+                                                    root.change_device_layout(idx, "us-to-jis");
+                                                }
+                                            }
+
+                                            ModePill {
+                                                width: 82px;
+                                                text: "JIS → US";
+                                                selected: dev.layout_mode == "jis-to-us";
+                                                clicked => {
+                                                    root.change_device_layout(idx, "jis-to-us");
+                                                }
+                                            }
+
+                                            ModePill {
+                                                width: 90px;
+                                                text: "Passthrough";
+                                                selected: dev.layout_mode == "passthrough";
+                                                clicked => {
+                                                    root.change_device_layout(idx, "passthrough");
+                                                }
                                             }
                                         }
                                     }
 
+                                    // Ctrl IME CheckBox
                                     VerticalLayout {
                                         alignment: center;
+                                        spacing: 4px;
+
                                         Text {
-                                            text: "Ctrl IME:";
+                                            text: "IME切替 (Ctrl):";
                                             font-size: 11px;
-                                            color: #555555;
+                                            font-weight: 600;
+                                            color: #495057;
                                         }
-                                        CheckBox {
-                                            text: "L:OFF / R:ON";
+
+                                        CustomCheckBox {
+                                            text: "左:OFF / 右:ON";
                                             checked: dev.ctrl_ime_enabled;
-                                            toggled => {
-                                                root.toggle_device_ctrl_ime(idx, self.checked);
+                                            toggled(val) => {
+                                                root.toggle_device_ctrl_ime(idx, val);
                                             }
                                         }
                                     }

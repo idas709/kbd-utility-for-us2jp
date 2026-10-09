@@ -85,6 +85,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let weak_for_activity = main_window.as_weak();
     set_activity_callback(move |_dev_id, log_text| {
         let _ = weak_for_activity.upgrade_in_event_loop(move |window| {
+            window.set_show_save_toast(false);
             window.set_live_input_log(SharedString::from(log_text));
         });
     });
@@ -129,16 +130,25 @@ fn main() -> Result<(), slint::PlatformError> {
     );
 
     // Toggle global enabled
+    let window_weak_toggle = main_window.as_weak();
     main_window.on_toggle_global_enabled({
         let config = config.clone();
         move |enabled| {
             info!("Global remapping enabled changed: {}", enabled);
             config.borrow_mut().general.enabled = enabled;
             update_engine_config(config.borrow().clone());
+            if let Some(win) = window_weak_toggle.upgrade() {
+                win.set_engine_status(SharedString::from(if enabled {
+                    "Standalone Engine: Active (リマップ動作中)"
+                } else {
+                    "Standalone Engine: Disabled (一時停止中)"
+                }));
+            }
         }
     });
 
     // Change layout mode
+    let window_weak_layout = main_window.as_weak();
     main_window.on_change_device_layout({
         let config = config.clone();
         let dev_model = device_model.clone();
@@ -162,11 +172,24 @@ fn main() -> Result<(), slint::PlatformError> {
                 update_engine_config(conf.clone());
                 let _ = conf.save_to_file("config.toml");
                 info!("Updated layout mode for {}: {}", item.name, mode_str);
+
+                if let Some(win) = window_weak_layout.upgrade() {
+                    win.set_save_toast_text(SharedString::from(format!(
+                        "モード変更完了: [{}] -> {}",
+                        item.name, mode_str
+                    )));
+                    win.set_show_save_toast(true);
+                    win.set_engine_status(SharedString::from(format!(
+                        "Standalone Engine: Active [{:?} 有効]",
+                        mode
+                    )));
+                }
             }
         }
     });
 
     // Toggle Ctrl IME
+    let window_weak_ime = main_window.as_weak();
     main_window.on_toggle_device_ctrl_ime({
         let config = config.clone();
         let dev_model = device_model.clone();
@@ -188,11 +211,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 update_engine_config(conf.clone());
                 let _ = conf.save_to_file("config.toml");
                 info!("Updated Ctrl IME for {}: {}", item.name, enabled);
+
+                if let Some(win) = window_weak_ime.upgrade() {
+                    win.set_save_toast_text(SharedString::from(format!(
+                        "Ctrl IME設定更新: [{}] -> {}",
+                        item.name,
+                        if enabled { "ON" } else { "OFF" }
+                    )));
+                    win.set_show_save_toast(true);
+                }
             }
         }
     });
 
     // Refresh devices button
+    let window_weak_refresh = main_window.as_weak();
     main_window.on_refresh_devices({
         let config = config.clone();
         let dev_model = device_model.clone();
@@ -201,6 +234,14 @@ fn main() -> Result<(), slint::PlatformError> {
             let new_items = build_device_items(&scanned);
             dev_model.set_vec(new_items);
             info!("Manually refreshed keyboard devices ({} found)", scanned.len());
+
+            if let Some(win) = window_weak_refresh.upgrade() {
+                win.set_save_toast_text(SharedString::from(format!(
+                    "キーボード再スキャン完了: 接続デバイス {} 台を検出",
+                    scanned.iter().filter(|d| d.is_connected).count()
+                )));
+                win.set_show_save_toast(true);
+            }
         }
     });
 
@@ -221,15 +262,19 @@ fn main() -> Result<(), slint::PlatformError> {
                     Ok(_) => {
                         let active_count = conf.devices.iter().filter(|d| d.layout_mode != LayoutMode::Passthrough).count();
                         window.set_save_toast_text(SharedString::from(format!(
-                            "✔ Settings Saved & Applied! (Mode: {:?}, Active Keyboards: {})",
+                            "設定を保存し即座に適用しました！（モード: {:?}, 対象キーボード: {}台）",
                             conf.general.default_layout_mode,
                             active_count
                         )));
                         window.set_show_save_toast(true);
+                        window.set_engine_status(SharedString::from(format!(
+                            "Standalone Engine: Active [{:?} 有効・設定保存済]",
+                            conf.general.default_layout_mode
+                        )));
                         info!("Configuration saved to config.toml successfully.");
                     }
                     Err(e) => {
-                        window.set_save_toast_text(SharedString::from(format!("Failed to save config: {}", e)));
+                        window.set_save_toast_text(SharedString::from(format!("保存エラー: {}", e)));
                         window.set_show_save_toast(true);
                         warn!("Failed to save config: {}", e);
                     }
