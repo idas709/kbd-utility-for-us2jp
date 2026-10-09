@@ -3,7 +3,7 @@ use tracing::info;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
     NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -276,16 +276,13 @@ fn run_tray_thread() {
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
         nid.uID = 1;
-        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO;
+        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid.uCallbackMessage = WM_TRAY_CALLBACK;
         nid.hIcon = icon;
         copy_to_wide_buf(&mut nid.szTip, "HID Keyboard Layout Remapper");
-        copy_to_wide_buf(&mut nid.szInfo, "タスクトレイに常駐しました。クリックで設定を開けます。");
-        copy_to_wide_buf(&mut nid.szInfoTitle, "HID Keyboard Layout Remapper");
-        nid.dwInfoFlags = NIIF_INFO;
 
         Shell_NotifyIconW(NIM_ADD, &nid);
-        info!("System tray icon registered successfully.");
+        info!("System tray icon registered successfully (silent).");
 
         // Message pump
         let mut msg: MSG = std::mem::zeroed();
