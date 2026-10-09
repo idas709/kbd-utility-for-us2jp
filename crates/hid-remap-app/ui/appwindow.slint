@@ -117,11 +117,12 @@ export component MainWindow inherits Window {
     icon: @image-url("assets/icon.png");
     preferred-width: 960px;
     preferred-height: 660px;
-    min-width: 840px;
+    min-width: 880px;
     min-height: 560px;
     background: #f4f5f7;
 
     in-out property <bool> global_enabled: true;
+    in-out property <bool> start_with_windows: true;
     in-out property <string> engine_status: "Standalone Engine: Active (Zero Install & Hotplug Detection)";
     in-out property <string> live_input_log: "Press keys to test remapping and IME switching...";
     in-out property <string> save_toast_text: "";
@@ -129,6 +130,7 @@ export component MainWindow inherits Window {
     in-out property <[DeviceItem]> devices: [];
 
     callback toggle_global_enabled(bool);
+    callback toggle_start_with_windows(bool);
     callback change_device_layout(int, string);
     callback toggle_device_ctrl_ime(int, bool);
     callback refresh_devices();
@@ -179,6 +181,12 @@ export component MainWindow inherits Window {
                         text: "リマップ有効";
                         checked: root.global_enabled;
                         toggled(val) => { root.toggle_global_enabled(val); }
+                    }
+
+                    CustomCheckBox {
+                        text: "スタートアップ";
+                        checked: root.start_with_windows;
+                        toggled(val) => { root.toggle_start_with_windows(val); }
                     }
 
                     ActionBtn {

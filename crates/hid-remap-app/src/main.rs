@@ -3,6 +3,7 @@
 slint::include_modules!();
 
 mod standalone_engine;
+mod startup;
 mod tray;
 
 use hid_remap_core::config::{AppConfig, DeviceConfig, LayoutMode};
@@ -78,11 +79,19 @@ fn main() -> Result<(), slint::PlatformError> {
     let scanned_devices = get_keyboard_devices(&config.borrow());
     let items = build_device_items(&scanned_devices);
     let device_model = Rc::new(VecModel::from(items));
+    let initial_enabled = config.borrow().general.enabled;
+    let initial_startup = config.borrow().general.start_with_windows;
     main_window.set_devices(ModelRc::from(device_model.clone()));
-    main_window.set_global_enabled(config.borrow().general.enabled);
+    main_window.set_global_enabled(initial_enabled);
+    main_window.set_start_with_windows(initial_startup);
     main_window.set_engine_status(SharedString::from(
         "Standalone Engine: Active (Zero Install & Hotplug Detection)",
     ));
+
+    // Ensure registry matches config on startup
+    if let Err(e) = startup::set_startup_enabled(initial_startup) {
+        warn!("Failed to synchronize startup registry setting: {}", e);
+    }
 
     // Setup live activity callback
     let weak_for_activity = main_window.as_weak();
@@ -147,6 +156,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 } else {
                     "Standalone Engine: Disabled (一時停止中)"
                 }));
+            }
+        }
+    });
+
+    // Toggle start with windows
+    let window_weak_startup = main_window.as_weak();
+    main_window.on_toggle_start_with_windows({
+        let config = config.clone();
+        move |enabled| {
+            info!("Start with Windows setting changed: {}", enabled);
+            config.borrow_mut().general.start_with_windows = enabled;
+            let _ = config.borrow().save_to_file("config.toml");
+            if let Err(e) = startup::set_startup_enabled(enabled) {
+                warn!("Failed to update startup registry setting: {}", e);
+            }
+            tray::update_tray_startup(enabled);
+            if let Some(win) = window_weak_startup.upgrade() {
+                win.set_save_toast_text(SharedString::from(format!(
+                    "スタートアップ設定更新: {}",
+                    if enabled { "Windows ログイン時に自動起動 (有効)" } else { "自動起動を無効化" }
+                )));
+                win.set_show_save_toast(true);
             }
         }
     });
@@ -309,6 +340,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // Start System Tray service
     let window_weak_tray_open = main_window.as_weak();
     let window_weak_tray_toggle = main_window.as_weak();
+    let window_weak_tray_startup = main_window.as_weak();
+
+    let tray_initial_enabled = config.borrow().general.enabled;
+    let tray_initial_startup = config.borrow().general.start_with_windows;
 
     let _tray = tray::start_tray_service(
         // on_open (left click or tray menu '設定画面を開く')
@@ -325,13 +360,22 @@ fn main() -> Result<(), slint::PlatformError> {
                 win.invoke_toggle_global_enabled(new_state);
             });
         },
+        // on_toggle_startup (tray menu 'スタートアップ起動')
+        move || {
+            let _ = window_weak_tray_startup.upgrade_in_event_loop(move |win| {
+                let new_state = !win.get_start_with_windows();
+                win.set_start_with_windows(new_state);
+                win.invoke_toggle_start_with_windows(new_state);
+            });
+        },
         // on_exit (tray menu '終了')
         move || {
             info!("Exit selected from system tray. Terminating application...");
             stop_standalone_engine();
             let _ = slint::quit_event_loop();
         },
-        config.borrow().general.enabled,
+        tray_initial_enabled,
+        tray_initial_startup,
     );
 
     // Check launch arguments: if --show is passed, show settings window on start!

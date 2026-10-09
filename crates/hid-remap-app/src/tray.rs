@@ -18,9 +18,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const WM_TRAY_CALLBACK: u32 = WM_USER + 100;
 const ID_OPEN: usize = 1001;
 const ID_TOGGLE: usize = 1002;
-const ID_EXIT: usize = 1003;
+const ID_STARTUP: usize = 1003;
+const ID_EXIT: usize = 1004;
 
 static GLOBAL_ENABLED: AtomicBool = AtomicBool::new(true);
+static STARTUP_ENABLED: AtomicBool = AtomicBool::new(true);
 
 use std::sync::Mutex;
 
@@ -29,6 +31,7 @@ type Callback = Box<dyn Fn() + Send + Sync + 'static>;
 struct TrayCallbacks {
     on_open: Callback,
     on_toggle: Callback,
+    on_toggle_startup: Callback,
     on_exit: Callback,
 }
 
@@ -59,24 +62,33 @@ pub fn update_tray_enabled(enabled: bool) {
     GLOBAL_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-pub fn start_tray_service<FOpen, FToggle, FExit>(
+pub fn update_tray_startup(enabled: bool) {
+    STARTUP_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn start_tray_service<FOpen, FToggle, FStartup, FExit>(
     on_open: FOpen,
     on_toggle: FToggle,
+    on_toggle_startup: FStartup,
     on_exit: FExit,
     initial_enabled: bool,
+    initial_startup: bool,
 ) -> TrayManager
 where
     FOpen: Fn() + Send + Sync + 'static,
     FToggle: Fn() + Send + Sync + 'static,
+    FStartup: Fn() + Send + Sync + 'static,
     FExit: Fn() + Send + Sync + 'static,
 {
     GLOBAL_ENABLED.store(initial_enabled, Ordering::Relaxed);
+    STARTUP_ENABLED.store(initial_startup, Ordering::Relaxed);
 
     {
         let mut guard = CALLBACKS.lock().unwrap();
         *guard = Some(TrayCallbacks {
             on_open: Box::new(on_open),
             on_toggle: Box::new(on_toggle),
+            on_toggle_startup: Box::new(on_toggle_startup),
             on_exit: Box::new(on_exit),
         });
     }
@@ -140,6 +152,13 @@ unsafe extern "system" fn tray_wnd_proc(
                         }
                     }
                 }
+                ID_STARTUP => {
+                    if let Ok(guard) = CALLBACKS.lock() {
+                        if let Some(cb) = guard.as_ref() {
+                            (cb.on_toggle_startup)();
+                        }
+                    }
+                }
                 ID_EXIT => {
                     if let Ok(guard) = CALLBACKS.lock() {
                         if let Some(cb) = guard.as_ref() {
@@ -174,6 +193,14 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         "✖ リマップ一時停止中 (&R)"
     };
     let wide_toggle = to_wide(toggle_text);
+
+    let is_startup = STARTUP_ENABLED.load(Ordering::Relaxed);
+    let startup_text = if is_startup {
+        "✔ スタートアップ起動 (有効) (&S)"
+    } else {
+        "スタートアップ起動 (無効) (&S)"
+    };
+    let wide_startup = to_wide(startup_text);
     let wide_exit = to_wide("❌ 終了 (&X)");
 
     let toggle_flags = if is_enabled {
@@ -182,8 +209,15 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         MF_STRING | MF_UNCHECKED
     };
 
+    let startup_flags = if is_startup {
+        MF_STRING | MF_CHECKED
+    } else {
+        MF_STRING | MF_UNCHECKED
+    };
+
     AppendMenuW(hmenu, MF_STRING, ID_OPEN, wide_open.as_ptr());
     AppendMenuW(hmenu, toggle_flags, ID_TOGGLE, wide_toggle.as_ptr());
+    AppendMenuW(hmenu, startup_flags, ID_STARTUP, wide_startup.as_ptr());
     AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
     AppendMenuW(hmenu, MF_STRING, ID_EXIT, wide_exit.as_ptr());
 
