@@ -30,4 +30,5 @@ windows-sys = { workspace = true, features = [
 
 [build-dependencies]
 slint-build = "1.9"
+winres = "0.1.12"
 
