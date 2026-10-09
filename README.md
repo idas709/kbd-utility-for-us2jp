@@ -110,36 +110,29 @@ powershell -ExecutionPolicy Bypass -File .\build-release.ps1
 
 ## 実行・インストール
 
-### 1. CLI ツールで接続キーボードを確認
-```powershell
-.\dist\hid-remap-cli.exe list
+### 1. MSI インストーラーによる導入（推奨）
+[WiX Toolset](https://wixtoolset.org/) でビルドされた Windows 標準インストーラーを提供しています：
+
+```
+dist\hid-remap-setup.msi
 ```
 
-### 2. GUI 設定ツールを起動
-```powershell
-.\dist\hid-remap-gui.exe
+- **全ユーザー / 現在のユーザーの選択可能**:
+  - **「このコンピュータを使用するすべてのユーザー用にインストール」**（All Users: `Program Files`、要管理者権限）
+  - **「現在のユーザーのみにインストール」**（Current User: `%LOCALAPPDATA%\Programs`、**管理者権限不要**）
+- **Windows 起動時の自動起動（スタートアップ）**: セットアップ時に自動登録。
+- **既存設定の完全保護**: バージョン更新時も `config.toml` の設定を安全に維持。
+- **Windows「設定」からクリーンアンインストール**: スタートアップ登録やショートカットを含め完全消去。
+
+### 2. ポータブル版（インストール不要）
+USBメモリや任意のフォルダーからダブルクリックするだけで即座に動作します：
+
+```
+dist\hid-remap.exe
 ```
 
-### 3. 常駐エージェントの起動
-ドライバー未導入時でも、ユーザーモードフック（フォールバック）により左右Ctrl IME切り替えを即座に利用できます：
-```powershell
-.\dist\hid-remap-agent.exe
-```
-
-### 4. システムへの正式インストール（管理者権限）
-```powershell
-powershell -ExecutionPolicy Bypass -File .\installer\install.ps1
-```
-
-### 5. アンインストール・緊急復旧
-- 通常アンインストール:
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File .\installer\uninstall.ps1
-  ```
-- 万が一の緊急復旧（標準キーボードスタックに戻す）:
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File .\installer\emergency-recover.ps1
-  ```
+- トレイアイコン常駐型、設定画面はトレイアイコンまたは多重起動時に復元可能。
+- 終了はシステムトレイの右クリックメニュー「終了」から安全に終了できます。
 
 ---
 
@@ -150,5 +143,6 @@ powershell -ExecutionPolicy Bypass -File .\installer\install.ps1
 ```powershell
 cargo test --workspace
 ```
-33件のテストが全件パスします。
+35件のテストが全件パスします。
+
 
