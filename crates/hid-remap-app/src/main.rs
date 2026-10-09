@@ -292,10 +292,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = win.hide();
             info!("Window close ('X') requested -> minimized to system tray.");
         }
-        slint::CloseRequestResponse::KeepWindowShown
+        slint::CloseRequestResponse::HideWindow
     });
 
-    // Hide window button
+    // Hide window button in UI
     let window_weak = main_window.as_weak();
     main_window.on_hide_window(move || {
         if let Some(win) = window_weak.upgrade() {
@@ -332,21 +332,16 @@ fn main() -> Result<(), slint::PlatformError> {
         config.borrow().general.enabled,
     );
 
-    // Check launch arguments: start hidden in tray unless --show is given
+    // Check launch arguments: if --show is passed, show settings window on start!
     let args: Vec<String> = std::env::args().collect();
     let start_shown = args.iter().any(|a| a == "--show" || a == "-s");
 
-    if !start_shown {
-        let weak_init = main_window.as_weak();
-        slint::Timer::single_shot(Duration::from_millis(20), move || {
-            if let Some(win) = weak_init.upgrade() {
-                let _ = win.hide();
-                info!("Application started minimized in system tray.");
-            }
-        });
+    if start_shown {
+        main_window.show()?;
     }
 
-    let result = main_window.run();
+    info!("Application resident in system tray. Starting persistent event loop...");
+    let result = slint::run_event_loop_until_quit();
     stop_standalone_engine();
     result
 }
