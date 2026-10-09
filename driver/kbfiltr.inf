@@ -1,0 +1,48 @@
+;
+; kbfiltr.inf
+;
+; Installation file for HID Keyboard Layout Remapper Filter Driver
+;
+
+[Version]
+Signature="$Windows NT$"
+Class=Keyboard
+ClassGuid={4d36e96b-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderName%
+CatalogFile=kbfiltr.cat
+DriverVer=10/09/2026,1.0.0.0
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+kbfiltr.sys = 1,,
+
+; ================= Class Filter Section =================
+
+[DefaultInstall.NTamd64]
+CopyFiles = @kbfiltr.sys
+AddReg = ClassFilter_AddReg
+
+[ClassFilter_AddReg]
+HKLM, System\CurrentControlSet\Control\Class\{4d36e96b-e325-11ce-bfc1-08002be10318}, UpperFilters, 0x00010008, kbfiltr
+
+[DefaultInstall.NTamd64.Services]
+AddService = kbfiltr,,KbFiltr_Service_Inst
+
+[KbFiltr_Service_Inst]
+DisplayName    = %KbFiltr.SvcDesc%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\kbfiltr.sys
+
+[Strings]
+ProviderName    = "HID Remapper Project"
+ManufacturerName= "HID Remapper Project"
+DiskName        = "Keyboard Filter Installation Disk"
+KbFiltr.SvcDesc = "HID Keyboard Layout Remapper Filter Driver"

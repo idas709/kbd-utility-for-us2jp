@@ -1,0 +1,22 @@
+[package]
+name = "hid-remap-service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Windows Service and Driver Communication Client for HID Keyboard Remapper"
+
+[dependencies]
+hid-remap-core = { path = "../hid-remap-core" }
+hid-remap-device = { path = "../hid-remap-device" }
+hid-remap-ime = { path = "../hid-remap-ime" }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
