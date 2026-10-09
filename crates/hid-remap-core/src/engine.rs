@@ -20,7 +20,8 @@ struct ActiveMapping {
     target_scan_code: ScanCode,
     target_flags: KeyFlags,
     injected_shift_down: bool,
-    injected_shift_up: bool,
+    injected_shift_up_lshift: bool,
+    injected_shift_up_rshift: bool,
 }
 
 /// Stateful keyboard remapping engine for a single keyboard device.
@@ -40,6 +41,10 @@ impl RemapEngine {
         }
     }
 
+    pub fn has_active_key(&self, scan_code: ScanCode) -> bool {
+        self.active_keys.contains_key(&scan_code)
+    }
+
     /// Reset internal state and return any necessary key up events to restore clean keyboard state.
     pub fn reset(&mut self) -> Vec<KeyEvent> {
         let mut cleanups = Vec::new();
@@ -50,8 +55,11 @@ impl RemapEngine {
             if active.injected_shift_down {
                 cleanups.push(KeyEvent::up(LSHIFT, KeyFlags::NORMAL));
             }
-            if active.injected_shift_up {
+            if active.injected_shift_up_lshift {
                 cleanups.push(KeyEvent::down(LSHIFT, KeyFlags::NORMAL));
+            }
+            if active.injected_shift_up_rshift {
+                cleanups.push(KeyEvent::down(RSHIFT, KeyFlags::NORMAL));
             }
             let _ = scan_code;
         }
@@ -135,7 +143,8 @@ impl RemapEngine {
         if let Some(map) = mapping {
             let mut events = Vec::new();
             let mut injected_shift_down = false;
-            let mut injected_shift_up = false;
+            let mut injected_shift_up_lshift = false;
+            let mut injected_shift_up_rshift = false;
 
             match map.target_shift {
                 TargetShiftState::RequireShift => {
@@ -146,10 +155,19 @@ impl RemapEngine {
                     }
                 }
                 TargetShiftState::RequireNoShift => {
-                    if physical_shift {
-                        // Invert: inject Shift Up
+                    if self.modifiers.lshift {
+                        // Invert: temporarily release Left Shift
                         events.push(KeyEvent::up(LSHIFT, KeyFlags::NORMAL));
-                        injected_shift_up = true;
+                        injected_shift_up_lshift = true;
+                    }
+                    if self.modifiers.rshift {
+                        // Invert: temporarily release Right Shift
+                        events.push(KeyEvent::up(RSHIFT, KeyFlags::NORMAL));
+                        injected_shift_up_rshift = true;
+                    }
+                    if physical_shift && !injected_shift_up_lshift && !injected_shift_up_rshift {
+                        events.push(KeyEvent::up(LSHIFT, KeyFlags::NORMAL));
+                        injected_shift_up_lshift = true;
                     }
                 }
                 TargetShiftState::Preserve => {}
@@ -169,7 +187,8 @@ impl RemapEngine {
                     target_scan_code: map.target_scan_code,
                     target_flags: map.target_flags,
                     injected_shift_down,
-                    injected_shift_up,
+                    injected_shift_up_lshift,
+                    injected_shift_up_rshift,
                 },
             );
 
@@ -201,9 +220,14 @@ impl RemapEngine {
             events.push(KeyEvent::up(LSHIFT, KeyFlags::NORMAL));
         }
 
-        if active.injected_shift_up && self.modifiers.is_shift() {
-            // We temporarily released Shift, but physical Shift is still pressed -> re-press Shift
+        if active.injected_shift_up_lshift && self.modifiers.lshift {
+            // We temporarily released Left Shift, but physical Left Shift is still pressed -> re-press Left Shift
             events.push(KeyEvent::down(LSHIFT, KeyFlags::NORMAL));
+        }
+
+        if active.injected_shift_up_rshift && self.modifiers.rshift {
+            // We temporarily released Right Shift, but physical Right Shift is still pressed -> re-press Right Shift
+            events.push(KeyEvent::down(RSHIFT, KeyFlags::NORMAL));
         }
 
         events
@@ -269,6 +293,65 @@ mod tests {
         // 4. Release Shift
         let shift_up = KeyEvent::up(LSHIFT, KeyFlags::NORMAL);
         assert_eq!(engine.process(shift_up), EngineAction::Emit(vec![shift_up]));
+    }
+
+    #[test]
+    fn test_us_to_jis_rshift_at_sign() {
+        let mut engine = RemapEngine::new(LayoutMode::UsToJis);
+
+        // 1. Press Right Shift
+        let rshift_down = KeyEvent::down(RSHIFT, KeyFlags::NORMAL);
+        assert_eq!(engine.process(rshift_down), EngineAction::Emit(vec![rshift_down]));
+
+        // 2. Press '2' (US '@') -> should temporarily release Right Shift (not Left Shift!)
+        let key_2_down = KeyEvent::down(KEY_2, KeyFlags::NORMAL);
+        assert_eq!(
+            engine.process(key_2_down),
+            EngineAction::Emit(vec![
+                KeyEvent::up(RSHIFT, KeyFlags::NORMAL),
+                KeyEvent::down(LBRACKET, KeyFlags::NORMAL),
+            ])
+        );
+
+        // 3. Release '2' -> should restore Right Shift (not Left Shift!)
+        let key_2_up = KeyEvent::up(KEY_2, KeyFlags::NORMAL);
+        assert_eq!(
+            engine.process(key_2_up),
+            EngineAction::Emit(vec![
+                KeyEvent::up(LBRACKET, KeyFlags::NORMAL),
+                KeyEvent::down(RSHIFT, KeyFlags::NORMAL),
+            ])
+        );
+
+        // 4. Release Right Shift
+        let rshift_up = KeyEvent::up(RSHIFT, KeyFlags::NORMAL);
+        assert_eq!(engine.process(rshift_up), EngineAction::Emit(vec![rshift_up]));
+    }
+
+    #[test]
+    fn test_us_to_jis_shift_released_first() {
+        let mut engine = RemapEngine::new(LayoutMode::UsToJis);
+
+        // 1. Press Left Shift
+        let shift_down = KeyEvent::down(LSHIFT, KeyFlags::NORMAL);
+        engine.process(shift_down);
+
+        // 2. Press '2'
+        let key_2_down = KeyEvent::down(KEY_2, KeyFlags::NORMAL);
+        engine.process(key_2_down);
+
+        // 3. Release Shift BEFORE releasing '2'
+        let shift_up = KeyEvent::up(LSHIFT, KeyFlags::NORMAL);
+        engine.process(shift_up);
+
+        // 4. Now release '2' -> must NOT re-inject Shift Down because physical Shift is no longer held!
+        let key_2_up = KeyEvent::up(KEY_2, KeyFlags::NORMAL);
+        assert_eq!(
+            engine.process(key_2_up),
+            EngineAction::Emit(vec![
+                KeyEvent::up(LBRACKET, KeyFlags::NORMAL),
+            ])
+        );
     }
 
     #[test]

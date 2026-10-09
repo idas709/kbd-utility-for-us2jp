@@ -45,6 +45,7 @@ struct DeviceEngine {
 struct EngineSharedState {
     device_engines: HashMap<String, DeviceEngine>,
     default_engine: DeviceEngine,
+    key_owners: HashMap<u16, String>,
     config: AppConfig,
 }
 
@@ -134,9 +135,11 @@ fn update_engine_state(config: AppConfig, connected_ids: &[String]) {
     let default_engine = create_engine_for_mode(active_mode, default_ctrl_ime, timeout);
 
     let mut guard = ENGINE_STATE.lock().unwrap();
+    let existing_owners = guard.as_mut().map(|s| std::mem::take(&mut s.key_owners)).unwrap_or_default();
     *guard = Some(EngineSharedState {
         device_engines,
         default_engine,
+        key_owners: existing_owners,
         config,
     });
     info!(
@@ -314,11 +317,44 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
                 if let Ok(mut guard) = ENGINE_STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        let active_id = get_last_typed_device();
-                        let (dev_engine, dev_label) = if let Some(ref id) = active_id {
-                            let upper = id.to_uppercase();
-                            if let Some(engine) = state.device_engines.get_mut(&upper) {
-                                (engine, id.as_str())
+                        let active_id = if is_down {
+                            let cur_id = get_last_typed_device();
+                            if let Some(ref id) = cur_id {
+                                state.key_owners.insert(scan_code, id.clone());
+                            } else {
+                                state.key_owners.remove(&scan_code);
+                            }
+                            cur_id
+                        } else {
+                            state.key_owners.remove(&scan_code).or_else(get_last_typed_device)
+                        };
+
+                        let target_engine_key: Option<String> = if is_up {
+                            if let Some(ref id) = active_id {
+                                let upper = id.to_uppercase();
+                                if state.device_engines.get(&upper).map_or(false, |de| de.engine.has_active_key(scan_code)) {
+                                    Some(upper)
+                                } else if state.default_engine.engine.has_active_key(scan_code) {
+                                    None
+                                } else if let Some((other_key, _)) = state.device_engines.iter().find(|(_, de)| de.engine.has_active_key(scan_code)) {
+                                    Some(other_key.clone())
+                                } else {
+                                    Some(upper)
+                                }
+                            } else if state.default_engine.engine.has_active_key(scan_code) {
+                                None
+                            } else if let Some((other_key, _)) = state.device_engines.iter().find(|(_, de)| de.engine.has_active_key(scan_code)) {
+                                Some(other_key.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            active_id.as_ref().map(|id| id.to_uppercase())
+                        };
+
+                        let (dev_engine, dev_label) = if let Some(ref upper) = target_engine_key {
+                            if let Some(engine) = state.device_engines.get_mut(upper) {
+                                (engine, upper.as_str())
                             } else {
                                 (&mut state.default_engine, "Default")
                             }
@@ -425,6 +461,14 @@ unsafe extern "system" fn low_level_keyboard_proc(
                             );
                         }
                     }
+                }
+
+                // If a physical shift key was released, unconditionally clear any synthetic Shift state in Windows!
+                if (scan_code == LSHIFT || scan_code == RSHIFT) && is_up {
+                    send_synthetic_events(&[
+                        KeyEvent::up(LSHIFT, KeyFlags::NORMAL),
+                        KeyEvent::up(RSHIFT, KeyFlags::NORMAL),
+                    ]);
                 }
 
                 // If the key was remapped, suppress original and inject transformed keys
