@@ -13,6 +13,7 @@ use standalone_engine::{
     set_activity_callback, start_standalone_engine, stop_standalone_engine, update_engine_config,
 };
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -46,8 +47,73 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+fn is_dir_writable(dir: &Path) -> bool {
+    let test_file = dir.join(format!(".test_write_{}.tmp", std::process::id()));
+    if let Ok(f) = std::fs::File::create(&test_file) {
+        drop(f);
+        let _ = std::fs::remove_file(&test_file);
+        true
+    } else {
+        false
+    }
+}
+
+fn is_file_or_dir_writable(file: &Path, dir: &Path) -> bool {
+    if file.exists() {
+        std::fs::OpenOptions::new().write(true).open(file).is_ok()
+    } else {
+        is_dir_writable(dir)
+    }
+}
+
+fn get_config_file_path() -> PathBuf {
+    // 1. If an explicit portable config.toml exists in exe directory and is writable, prioritize it
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_config = exe_dir.join("config.toml");
+            if exe_config.exists() {
+                if is_file_or_dir_writable(&exe_config, exe_dir) {
+                    return exe_config;
+                }
+            } else if is_dir_writable(exe_dir) {
+                return exe_config;
+            }
+        }
+    }
+
+    // 2. Per-user standard directory: %APPDATA%\HIDKeyboardLayoutRemapper\config.toml
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let app_dir = PathBuf::from(appdata).join("HIDKeyboardLayoutRemapper");
+        let _ = std::fs::create_dir_all(&app_dir);
+        let user_config = app_dir.join("config.toml");
+
+        // If user config doesn't exist yet, copy from exe dir template if available
+        if !user_config.exists() {
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    let template = exe_dir.join("config.toml");
+                    if template.exists() {
+                        let _ = std::fs::copy(&template, &user_config);
+                    }
+                }
+            }
+        }
+        return user_config;
+    }
+
+    // 3. Fallback
+    PathBuf::from("config.toml")
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     tracing_subscriber::fmt::init();
+
+    // Ensure working directory is set to exe directory if possible
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let _ = std::env::set_current_dir(exe_dir);
+        }
+    }
 
     // Prevent multiple instances (single-instance mutex lock)
     let mutex_name = to_wide("Local\\HIDKeyboardLayoutRemapperSingleInstanceMutex");
@@ -88,8 +154,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     info!("Starting HID Keyboard Remapper Standalone Application with Auto-Detection...");
 
+    let config_path = Rc::new(get_config_file_path());
+    info!("Using configuration file: {:?}", config_path);
+
     // Clean up sample / dummy configs and detect actual hardware
-    let mut initial_config = AppConfig::load_from_file("config.toml").unwrap_or_default();
+    let mut initial_config = AppConfig::load_from_file(&*config_path).unwrap_or_default();
     initial_config
         .devices
         .retain(|d| !d.instance_id.contains("EXAMPLE"));
@@ -121,7 +190,7 @@ fn main() -> Result<(), slint::PlatformError> {
     } else if let Some(active_dev) = connected_devs.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
         initial_config.general.default_layout_mode = active_dev.layout_mode;
     }
-    let _ = initial_config.save_to_file("config.toml");
+    let _ = initial_config.save_to_file(&*config_path);
 
     let config = Rc::new(RefCell::new(initial_config));
 
@@ -202,11 +271,13 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Toggle global enabled
     let window_weak_toggle = main_window.as_weak();
+    let config_path_toggle = config_path.clone();
     main_window.on_toggle_global_enabled({
         let config = config.clone();
         move |enabled| {
             info!("Global remapping enabled changed: {}", enabled);
             config.borrow_mut().general.enabled = enabled;
+            let _ = config.borrow().save_to_file(&*config_path_toggle);
             tray::update_tray_enabled(enabled);
             let current_conf = config.borrow().clone();
             let scanned = get_keyboard_devices(&current_conf);
@@ -228,12 +299,13 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Toggle start with windows
     let window_weak_startup = main_window.as_weak();
+    let config_path_startup = config_path.clone();
     main_window.on_toggle_start_with_windows({
         let config = config.clone();
         move |enabled| {
             info!("Start with Windows setting changed: {}", enabled);
             config.borrow_mut().general.start_with_windows = enabled;
-            let _ = config.borrow().save_to_file("config.toml");
+            let _ = config.borrow().save_to_file(&*config_path_startup);
             if let Err(e) = startup::set_startup_enabled(enabled) {
                 warn!("Failed to update startup registry setting: {}", e);
             }
@@ -250,6 +322,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Change layout mode
     let window_weak_layout = main_window.as_weak();
+    let config_path_layout = config_path.clone();
     main_window.on_change_device_layout({
         let config = config.clone();
         let dev_model = device_model.clone();
@@ -291,7 +364,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
 
                 update_engine_config(conf.clone(), &connected_ids);
-                let _ = conf.save_to_file("config.toml");
+                let _ = conf.save_to_file(&*config_path_layout);
                 info!("Updated layout mode for {}: {}", item.name, mode_str);
 
                 if let Some(win) = window_weak_layout.upgrade() {
@@ -311,6 +384,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Toggle Ctrl IME
     let window_weak_ime = main_window.as_weak();
+    let config_path_ime = config_path.clone();
     main_window.on_toggle_device_ctrl_ime({
         let config = config.clone();
         let dev_model = device_model.clone();
@@ -338,7 +412,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     .collect();
 
                 update_engine_config(conf.clone(), &connected_ids);
-                let _ = conf.save_to_file("config.toml");
+                let _ = conf.save_to_file(&*config_path_ime);
                 info!("Updated Ctrl IME for {}: {}", item.name, enabled);
 
                 if let Some(win) = window_weak_ime.upgrade() {
@@ -355,6 +429,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Refresh devices button
     let window_weak_refresh = main_window.as_weak();
+    let config_path_refresh = config_path.clone();
     main_window.on_refresh_devices({
         let config = config.clone();
         let dev_model = device_model.clone();
@@ -366,7 +441,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let connected_ids: Vec<String> = scanned.iter().filter(|d| d.is_connected).map(|d| d.instance_id.clone()).collect();
             tray::populate_device_cache();
             update_engine_config(conf.clone(), &connected_ids);
-            let _ = conf.save_to_file("config.toml");
+            let _ = conf.save_to_file(&*config_path_refresh);
             info!("Manually refreshed keyboard devices ({} found)", scanned.len());
 
             if let Some(win) = window_weak_refresh.upgrade() {
