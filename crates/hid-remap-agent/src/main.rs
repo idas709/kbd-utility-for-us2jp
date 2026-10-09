@@ -92,3 +92,4 @@ fn main() {
     hook_fallback::stop_hook();
     info!("User Session Agent stopped.");
 }
+

@@ -46,3 +46,4 @@ ProviderName    = "HID Remapper Project"
 ManufacturerName= "HID Remapper Project"
 DiskName        = "Keyboard Filter Installation Disk"
 KbFiltr.SvcDesc = "HID Keyboard Layout Remapper Filter Driver"
+

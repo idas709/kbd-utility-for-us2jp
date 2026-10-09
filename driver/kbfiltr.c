@@ -521,3 +521,4 @@ KbFiltr_ControlDevice_EvtIoDeviceControl(
 
     WdfRequestCompleteWithInformation(Request, status, bytesReturned);
 }
+

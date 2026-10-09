@@ -1,0 +1,20 @@
+[package]
+name = "hid-remap-gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Modern Slint GUI configuration tool for HID Keyboard Layout Remapper"
+
+[dependencies]
+hid-remap-core = { path = "../hid-remap-core" }
+hid-remap-device = { path = "../hid-remap-device" }
+hid-remap-service = { path = "../hid-remap-service" }
+hid-remap-ime = { path = "../hid-remap-ime" }
+slint = "1.9"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+slint-build = "1.9"
+
