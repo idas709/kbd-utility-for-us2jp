@@ -1,0 +1,5 @@
+<WixLocalization xmlns="http://wixtoolset.org/schemas/v4/wxl" Culture="ja-JP">
+    <String Id="DowngradeErrorMessage" Value="既に新しいバージョンの HID Keyboard Layout Remapper がインストールされています。" />
+    <String Id="LaunchAppOnFinish" Value="HID Keyboard Layout Remapper を今すぐ起動する" />
+</WixLocalization>
+

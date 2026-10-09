@@ -1,0 +1,89 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+    <Package Name="HID Keyboard Layout Remapper"
+             Manufacturer="HID Remap Project"
+             Version="0.1.0"
+             UpgradeCode="8B321D50-0A16-417A-B962-E9C59B7F1D02"
+             Scope="perMachineOrUser">
+        <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeErrorMessage)" />
+        <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+        <!-- Application Icon -->
+        <Icon Id="AppIcon" SourceFile="crates\hid-remap-app\ui\assets\app_icon.ico" />
+        <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+        <Property Id="ARPHELPLINK" Value="https://github.com/sgt23/kbd-utility-for-us2jp" />
+        <Property Id="ARPURLINFOABOUT" Value="https://github.com/sgt23/kbd-utility-for-us2jp" />
+
+        <!-- Advanced UI allowing user to choose All Users vs Current User -->
+        <ui:WixUI Id="WixUI_Advanced" />
+        <Property Id="ApplicationFolderName" Value="HID Keyboard Layout Remapper" />
+        <Property Id="WixAppFolder" Value="WixPerMachineFolder" />
+
+        <!-- Optional Launch after install -->
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchAppOnFinish)" />
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+        <CustomAction Id="LaunchApplication"
+                      FileRef="HidRemapExe"
+                      ExeCommand=""
+                      Return="asyncNoWait" />
+
+        <UI>
+            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+        </UI>
+
+        <StandardDirectory Id="ProgramFiles64Folder">
+            <Directory Id="APPLICATIONFOLDER" Name="HID Keyboard Layout Remapper">
+                <Component Id="MainExecutable" Guid="*">
+                    <File Id="HidRemapExe" Source="target\release\hid-remap.exe" KeyPath="yes">
+                        <Shortcut Id="AppStartMenuShortcut"
+                                  Directory="ProgramMenuFolder"
+                                  Name="HID Keyboard Layout Remapper"
+                                  WorkingDirectory="APPLICATIONFOLDER"
+                                  Icon="AppIcon"
+                                  Advertise="no" />
+                        <Shortcut Id="AppDesktopShortcut"
+                                  Directory="DesktopFolder"
+                                  Name="HID Keyboard Layout Remapper"
+                                  WorkingDirectory="APPLICATIONFOLDER"
+                                  Icon="AppIcon"
+                                  Advertise="no" />
+                    </File>
+                </Component>
+
+                <Component Id="ConfigFile" Guid="*" NeverOverwrite="yes">
+                    <File Id="ConfigToml" Source="config.toml" KeyPath="yes" />
+                </Component>
+
+                <Component Id="AppIconFile" Guid="*">
+                    <File Id="IconIco" Source="crates\hid-remap-app\ui\assets\app_icon.ico" KeyPath="yes" />
+                </Component>
+
+                <Component Id="ReadmeFile" Guid="*">
+                    <File Id="ReadmeMd" Source="README.md" KeyPath="yes" />
+                </Component>
+
+                <Component Id="StartupRegistry" Guid="8B321D50-0A16-417A-B962-E9C59B7F1D03">
+                    <RegistryValue Root="HKMU"
+                                   Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                                   Name="HIDKeyboardLayoutRemapper"
+                                   Value="&quot;[#HidRemapExe]&quot;"
+                                   Type="string"
+                                   KeyPath="yes" />
+                </Component>
+            </Directory>
+        </StandardDirectory>
+
+        <StandardDirectory Id="ProgramMenuFolder" />
+        <StandardDirectory Id="DesktopFolder" />
+
+        <Feature Id="MainFeature" Title="HID Keyboard Layout Remapper" Level="1">
+            <ComponentRef Id="MainExecutable" />
+            <ComponentRef Id="ConfigFile" />
+            <ComponentRef Id="AppIconFile" />
+            <ComponentRef Id="ReadmeFile" />
+            <ComponentRef Id="StartupRegistry" />
+        </Feature>
+    </Package>
+</Wix>
+
