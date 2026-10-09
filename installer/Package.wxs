@@ -11,8 +11,8 @@
         <!-- Application Icon -->
         <Icon Id="AppIcon" SourceFile="crates\hid-remap-app\ui\assets\app_icon.ico" />
         <Property Id="ARPPRODUCTICON" Value="AppIcon" />
-        <Property Id="ARPHELPLINK" Value="https://github.com/sgt23/kbd-utility-for-us2jp" />
-        <Property Id="ARPURLINFOABOUT" Value="https://github.com/sgt23/kbd-utility-for-us2jp" />
+        <Property Id="ARPHELPLINK" Value="https://github.com/idas709/kbd-utility-for-us2jp" />
+        <Property Id="ARPURLINFOABOUT" Value="https://github.com/idas709/kbd-utility-for-us2jp" />
 
         <!-- Advanced UI allowing user to choose All Users vs Current User -->
         <ui:WixUI Id="WixUI_Advanced" />
