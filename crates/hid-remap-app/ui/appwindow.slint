@@ -145,19 +145,21 @@ export component MainWindow inherits Window {
             border-radius: 8px;
             drop-shadow-blur: 4px;
             drop-shadow-color: #00000015;
-            height: 74px;
+            height: 64px;
 
             HorizontalLayout {
                 padding-left: 20px;
                 padding-right: 20px;
+                padding-top: 14px;
+                padding-bottom: 14px;
                 alignment: space-between;
 
                 VerticalLayout {
                     alignment: center;
-                    spacing: 4px;
+                    spacing: 3px;
                     Text {
                         text: "HID Keyboard Layout Remapper";
-                        font-size: 18px;
+                        font-size: 17px;
                         font-weight: 700;
                         color: #111111;
                     }
@@ -195,7 +197,7 @@ export component MainWindow inherits Window {
 
                     ActionBtn {
                         width: 80px;
-                        text: "最小化";
+                        text: "トレイへ";
                         primary: false;
                         clicked => { root.hide_window(); }
                     }

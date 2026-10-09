@@ -1,6 +1,7 @@
 slint::include_modules!();
 
 mod standalone_engine;
+mod tray;
 
 use hid_remap_core::config::{AppConfig, DeviceConfig, LayoutMode};
 use hid_remap_device::{get_keyboard_devices, KeyboardDeviceInfo};
@@ -136,6 +137,7 @@ fn main() -> Result<(), slint::PlatformError> {
         move |enabled| {
             info!("Global remapping enabled changed: {}", enabled);
             config.borrow_mut().general.enabled = enabled;
+            tray::update_tray_enabled(enabled);
             update_engine_config(config.borrow().clone());
             if let Some(win) = window_weak_toggle.upgrade() {
                 win.set_engine_status(SharedString::from(if enabled {
@@ -283,14 +285,66 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Intercept window close ('X' button) to keep running in system tray
+    let window_weak_close = main_window.as_weak();
+    main_window.window().on_close_requested(move || {
+        if let Some(win) = window_weak_close.upgrade() {
+            let _ = win.hide();
+            info!("Window close ('X') requested -> minimized to system tray.");
+        }
+        slint::CloseRequestResponse::KeepWindowShown
+    });
+
     // Hide window button
     let window_weak = main_window.as_weak();
     main_window.on_hide_window(move || {
         if let Some(win) = window_weak.upgrade() {
             let _ = win.hide();
-            info!("GUI minimized to background. Input remapping and Ctrl IME remain active.");
+            info!("GUI minimized to system tray. Input remapping and Ctrl IME remain active.");
         }
     });
+
+    // Start System Tray service
+    let window_weak_tray_open = main_window.as_weak();
+    let window_weak_tray_toggle = main_window.as_weak();
+
+    let _tray = tray::start_tray_service(
+        // on_open (left click or tray menu '設定画面を開く')
+        move || {
+            let _ = window_weak_tray_open.upgrade_in_event_loop(|win| {
+                let _ = win.show();
+            });
+        },
+        // on_toggle (tray menu 'リマップ有効/無効')
+        move || {
+            let _ = window_weak_tray_toggle.upgrade_in_event_loop(move |win| {
+                let new_state = !win.get_global_enabled();
+                win.set_global_enabled(new_state);
+                win.invoke_toggle_global_enabled(new_state);
+            });
+        },
+        // on_exit (tray menu '終了')
+        move || {
+            info!("Exit selected from system tray. Terminating application...");
+            stop_standalone_engine();
+            let _ = slint::quit_event_loop();
+        },
+        config.borrow().general.enabled,
+    );
+
+    // Check launch arguments: start hidden in tray unless --show is given
+    let args: Vec<String> = std::env::args().collect();
+    let start_shown = args.iter().any(|a| a == "--show" || a == "-s");
+
+    if !start_shown {
+        let weak_init = main_window.as_weak();
+        slint::Timer::single_shot(Duration::from_millis(20), move || {
+            if let Some(win) = weak_init.upgrade() {
+                let _ = win.hide();
+                info!("Application started minimized in system tray.");
+            }
+        });
+    }
 
     let result = main_window.run();
     stop_standalone_engine();
