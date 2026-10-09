@@ -17,7 +17,7 @@ component ActionBtn inherits Rectangle {
     height: 36px;
     border-radius: 6px;
     background: primary ? (touch.has-hover ? #106ebe : #0078d4) : (touch.has-hover ? #e9ecef : #f8f9fa);
-    border-width: 1px;
+    border-width: 1.5px;
     border-color: primary ? #005a9e : #ced4da;
 
     touch := TouchArea {
@@ -59,50 +59,54 @@ component ModePill inherits Rectangle {
     }
 }
 
-component CustomCheckBox inherits HorizontalLayout {
+component CustomCheckBox inherits Rectangle {
     in property <string> text;
     in-out property <bool> checked: false;
     callback toggled(bool);
 
-    spacing: 8px;
-    alignment: start;
+    height: 32px;
+    background: transparent;
 
-    box := Rectangle {
-        width: 18px;
-        height: 18px;
-        border-radius: 3px;
-        background: root.checked ? #0078d4 : #ffffff;
-        border-width: 1.5px;
-        border-color: root.checked ? #005a9e : #666666;
-
-        if root.checked : Text {
-            text: "✔";
-            font-size: 11px;
-            font-weight: 700;
-            color: #ffffff;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-
-        TouchArea {
-            clicked => {
-                root.checked = !root.checked;
-                root.toggled(root.checked);
-            }
+    touch := TouchArea {
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
         }
     }
 
-    Text {
-        text: root.text;
-        font-size: 12px;
-        font-weight: 500;
-        color: #212529;
-        vertical-alignment: center;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
 
-        TouchArea {
-            clicked => {
-                root.checked = !root.checked;
-                root.toggled(root.checked);
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 3px;
+                background: root.checked ? #0078d4 : #ffffff;
+                border-width: 1.5px;
+                border-color: root.checked ? #005a9e : #666666;
+
+                if root.checked : Text {
+                    text: "✔";
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: #ffffff;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.text;
+                font-size: 13px;
+                font-weight: 600;
+                color: #212529;
+                vertical-alignment: center;
             }
         }
     }
@@ -149,6 +153,7 @@ export component MainWindow inherits Window {
 
                 VerticalLayout {
                     alignment: center;
+                    spacing: 4px;
                     Text {
                         text: "HID Keyboard Layout Remapper";
                         font-size: 18px;
@@ -174,7 +179,7 @@ export component MainWindow inherits Window {
                     }
 
                     ActionBtn {
-                        width: 90px;
+                        width: 95px;
                         text: "🔄 再検出";
                         primary: false;
                         clicked => { root.refresh_devices(); }
@@ -211,7 +216,7 @@ export component MainWindow inherits Window {
                 alignment: space-between;
 
                 HorizontalLayout {
-                    alignment: start;
+                    alignment: center;
                     spacing: 10px;
 
                     Text {
@@ -232,12 +237,15 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                if root.show_save_toast : Text {
-                    text: "[ 設定反映完了 / Applied ]";
-                    font-size: 12px;
-                    font-weight: 700;
-                    color: #155724;
-                    vertical-alignment: center;
+                if root.show_save_toast : VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "[ 設定反映完了 / Applied ]";
+                        font-size: 12px;
+                        font-weight: 700;
+                        color: #155724;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -317,7 +325,7 @@ export component MainWindow inherits Window {
                                 // Right: Controls
                                 HorizontalLayout {
                                     alignment: center;
-                                    spacing: 20px;
+                                    spacing: 24px;
 
                                     // Layout Mode Segmented Pill Buttons
                                     VerticalLayout {
@@ -336,6 +344,7 @@ export component MainWindow inherits Window {
 
                                             ModePill {
                                                 width: 82px;
+                                                height: 28px;
                                                 text: "US → JIS";
                                                 selected: dev.layout_mode == "us-to-jis";
                                                 clicked => {
@@ -345,6 +354,7 @@ export component MainWindow inherits Window {
 
                                             ModePill {
                                                 width: 82px;
+                                                height: 28px;
                                                 text: "JIS → US";
                                                 selected: dev.layout_mode == "jis-to-us";
                                                 clicked => {
@@ -354,6 +364,7 @@ export component MainWindow inherits Window {
 
                                             ModePill {
                                                 width: 90px;
+                                                height: 28px;
                                                 text: "Passthrough";
                                                 selected: dev.layout_mode == "passthrough";
                                                 clicked => {
@@ -376,6 +387,7 @@ export component MainWindow inherits Window {
                                         }
 
                                         CustomCheckBox {
+                                            height: 28px;
                                             text: "左:OFF / 右:ON";
                                             checked: dev.ctrl_ime_enabled;
                                             toggled(val) => {
