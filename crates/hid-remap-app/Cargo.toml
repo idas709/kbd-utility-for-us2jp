@@ -1,0 +1,33 @@
+[package]
+name = "hid-remap-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "All-in-one standalone executable for HID Keyboard Layout Remapper"
+
+[[bin]]
+name = "hid-remap"
+path = "src/main.rs"
+
+[dependencies]
+hid-remap-core = { path = "../hid-remap-core" }
+hid-remap-device = { path = "../hid-remap-device" }
+hid-remap-ime = { path = "../hid-remap-ime" }
+hid-remap-service = { path = "../hid-remap-service" }
+slint = "1.9"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_System_Threading",
+    "Win32_Graphics_Gdi",
+] }
+
+[build-dependencies]
+slint-build = "1.9"
+

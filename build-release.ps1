@@ -29,6 +29,7 @@ New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
 $ReleaseBinDir = Join-Path $WorkspaceRoot "target\release"
 
 $Binaries = @(
+    "hid-remap.exe",
     "hid-remap-service.exe",
     "hid-remap-agent.exe",
     "hid-remap-gui.exe",

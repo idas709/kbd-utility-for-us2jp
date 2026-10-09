@@ -8,6 +8,7 @@ members = [
     "crates/hid-remap-agent",
     "crates/hid-remap-gui",
     "crates/hid-remap-cli",
+    "crates/hid-remap-app",
 ]
 
 [workspace.package]

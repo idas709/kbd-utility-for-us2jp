@@ -98,3 +98,4 @@ Windows が起動しない、または入力が完全に効かない場合：
 3. `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Class\{4d36e96b-e325-11ce-bfc1-08002be10318}` を開く。
 4. `UpperFilters` 値から `kbfiltr` を削除する（通常は `kbdclass` または空）。
 5. PC を通常再起動する。
+
