@@ -159,6 +159,30 @@ pub fn refresh_hook() {
     }
 }
 
+pub fn reset_engine_states() {
+    if let Ok(mut guard) = ENGINE_STATE.lock() {
+        if let Some(state) = guard.as_mut() {
+            let mut all_cleanups = Vec::new();
+            for de in state.device_engines.values_mut() {
+                all_cleanups.extend(de.engine.reset());
+            }
+            all_cleanups.extend(state.default_engine.engine.reset());
+            state.key_owners.clear();
+            if !all_cleanups.is_empty() {
+                send_synthetic_events(&all_cleanups);
+            }
+        }
+    }
+}
+
+pub fn reactivate_engine(config: AppConfig, connected_ids: &[String]) {
+    GLOBAL_ENABLED.store(true, Ordering::Relaxed);
+    reset_engine_states();
+    update_engine_state(config, connected_ids);
+    refresh_hook();
+    info!("Engine reactivated and hook refreshed.");
+}
+
 pub fn update_engine_config(config: AppConfig, connected_ids: &[String]) {
     GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
     update_engine_state(config, connected_ids);

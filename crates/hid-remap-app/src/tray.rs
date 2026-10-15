@@ -98,6 +98,7 @@ const ID_OPEN: usize = 1001;
 const ID_TOGGLE: usize = 1002;
 const ID_STARTUP: usize = 1003;
 const ID_EXIT: usize = 1004;
+const ID_REACTIVATE: usize = 1005;
 
 static GLOBAL_ENABLED: AtomicBool = AtomicBool::new(true);
 static STARTUP_ENABLED: AtomicBool = AtomicBool::new(true);
@@ -106,6 +107,7 @@ type Callback = Box<dyn Fn() + Send + Sync + 'static>;
 
 struct TrayCallbacks {
     on_open: Callback,
+    on_reactivate: Callback,
     on_toggle: Callback,
     on_toggle_startup: Callback,
     on_exit: Callback,
@@ -142,8 +144,9 @@ pub fn update_tray_startup(enabled: bool) {
     STARTUP_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-pub fn start_tray_service<FOpen, FToggle, FStartup, FExit>(
+pub fn start_tray_service<FOpen, FReactivate, FToggle, FStartup, FExit>(
     on_open: FOpen,
+    on_reactivate: FReactivate,
     on_toggle: FToggle,
     on_toggle_startup: FStartup,
     on_exit: FExit,
@@ -152,6 +155,7 @@ pub fn start_tray_service<FOpen, FToggle, FStartup, FExit>(
 ) -> TrayManager
 where
     FOpen: Fn() + Send + Sync + 'static,
+    FReactivate: Fn() + Send + Sync + 'static,
     FToggle: Fn() + Send + Sync + 'static,
     FStartup: Fn() + Send + Sync + 'static,
     FExit: Fn() + Send + Sync + 'static,
@@ -163,6 +167,7 @@ where
         let mut guard = CALLBACKS.lock().unwrap();
         *guard = Some(TrayCallbacks {
             on_open: Box::new(on_open),
+            on_reactivate: Box::new(on_reactivate),
             on_toggle: Box::new(on_toggle),
             on_toggle_startup: Box::new(on_toggle_startup),
             on_exit: Box::new(on_exit),
@@ -218,6 +223,13 @@ unsafe extern "system" fn tray_wnd_proc(
                     if let Ok(guard) = CALLBACKS.lock() {
                         if let Some(cb) = guard.as_ref() {
                             (cb.on_open)();
+                        }
+                    }
+                }
+                ID_REACTIVATE => {
+                    if let Ok(guard) = CALLBACKS.lock() {
+                        if let Some(cb) = guard.as_ref() {
+                            (cb.on_reactivate)();
                         }
                     }
                 }
@@ -293,6 +305,7 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     }
 
     let wide_open = to_wide("⚙ 設定画面を開く (&O)");
+    let wide_reactivate = to_wide("⚡ リマップを再有効化 (&A)");
     let is_enabled = GLOBAL_ENABLED.load(Ordering::Relaxed);
     let toggle_text = if is_enabled {
         "✔ リマップ有効 (動作中) (&R)"
@@ -323,6 +336,7 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     };
 
     AppendMenuW(hmenu, MF_STRING, ID_OPEN, wide_open.as_ptr());
+    AppendMenuW(hmenu, MF_STRING, ID_REACTIVATE, wide_reactivate.as_ptr());
     AppendMenuW(hmenu, toggle_flags, ID_TOGGLE, wide_toggle.as_ptr());
     AppendMenuW(hmenu, startup_flags, ID_STARTUP, wide_startup.as_ptr());
     AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());

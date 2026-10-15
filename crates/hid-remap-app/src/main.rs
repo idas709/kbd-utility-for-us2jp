@@ -10,8 +10,8 @@ use hid_remap_core::config::{AppConfig, DeviceConfig, LayoutMode};
 use hid_remap_device::{get_keyboard_devices, KeyboardDeviceInfo};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use standalone_engine::{
-    refresh_hook, set_activity_callback, start_standalone_engine, stop_standalone_engine,
-    update_engine_config,
+    reactivate_engine, refresh_hook, set_activity_callback, start_standalone_engine,
+    stop_standalone_engine, update_engine_config,
 };
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -456,6 +456,44 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Reactivate engine button
+    let window_weak_reactivate = main_window.as_weak();
+    let config_path_reactivate = config_path.clone();
+    main_window.on_reactivate_engine({
+        let config = config.clone();
+        let dev_model = device_model.clone();
+        move || {
+            let mut conf = config.borrow_mut();
+            conf.general.enabled = true;
+            let _ = conf.save_to_file(&*config_path_reactivate);
+            tray::update_tray_enabled(true);
+
+            let scanned = get_keyboard_devices(&conf);
+            let new_items = build_device_items(&scanned);
+            dev_model.set_vec(new_items);
+            let connected_ids: Vec<String> = scanned
+                .iter()
+                .filter(|d| d.is_connected)
+                .map(|d| d.instance_id.clone())
+                .collect();
+
+            tray::populate_device_cache();
+            reactivate_engine(conf.clone(), &connected_ids);
+            info!("Manually reactivated input remapping and refreshed hook.");
+
+            if let Some(win) = window_weak_reactivate.upgrade() {
+                win.set_global_enabled(true);
+                win.set_engine_status(SharedString::from(
+                    "Standalone Engine: Active (リマップ & フック再有効化完了)",
+                ));
+                win.set_save_toast_text(SharedString::from(
+                    "⚡ リマップとキーボードフックを再有効化しました (フック再接続完了)",
+                ));
+                win.set_show_save_toast(true);
+            }
+        }
+    });
+
     // Intercept window close ('X' button) to keep running in system tray
     let window_weak_close = main_window.as_weak();
     main_window.window().on_close_requested(move || {
@@ -477,6 +515,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Start System Tray service
     let window_weak_tray_open = main_window.as_weak();
+    let window_weak_tray_reactivate = main_window.as_weak();
     let window_weak_tray_toggle = main_window.as_weak();
     let window_weak_tray_startup = main_window.as_weak();
 
@@ -498,6 +537,12 @@ fn main() -> Result<(), slint::PlatformError> {
                         windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
                     }
                 }
+            });
+        },
+        // on_reactivate (tray menu '⚡ リマップを再有効化')
+        move || {
+            let _ = window_weak_tray_reactivate.upgrade_in_event_loop(move |win| {
+                win.invoke_reactivate_engine();
             });
         },
         // on_toggle (tray menu 'リマップ有効/無効')
