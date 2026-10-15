@@ -9,23 +9,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tracing::info;
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::System::Threading::{
+    GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
+    GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, VK_CONTROL, VK_LCONTROL,
+    VK_LWIN, VK_MENU, VK_RCONTROL, VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT,
-    LLKHF_EXTENDED, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
+    TranslateMessage, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG,
+    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
 };
 
 const MAPVK_VK_TO_VSC: u32 = 0;
 const MAPVK_VSC_TO_VK_EX: u32 = 3;
 
 static HOOK_HANDLE: Mutex<isize> = Mutex::new(0);
+static HOOK_THREAD_ID: Mutex<u32> = Mutex::new(0);
 static GLOBAL_ENABLED: AtomicBool = AtomicBool::new(true);
 static ENGINE_STATE: Mutex<Option<EngineSharedState>> = Mutex::new(None);
 static ACTIVITY_CALLBACK: Mutex<Option<Box<dyn Fn(String, String) + Send + Sync>>> = Mutex::new(None);
 static LAST_TYPED_DEVICE: Mutex<Option<String>> = Mutex::new(None);
+
+pub const WM_USER_REFRESH_HOOK: u32 = WM_USER + 200;
 
 pub fn set_last_typed_device(instance_id: String) {
     if let Ok(mut guard) = LAST_TYPED_DEVICE.lock() {
@@ -68,26 +76,109 @@ pub fn start_standalone_engine(config: AppConfig, connected_ids: &[String]) -> R
     GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
     update_engine_state(config, connected_ids);
 
-    unsafe {
-        let hook = SetWindowsHookExW(
-            WH_KEYBOARD_LL,
-            Some(low_level_keyboard_proc),
-            std::ptr::null_mut(),
-            0,
-        );
-        if hook.is_null() {
-            return Err("Failed to install standalone keyboard hook");
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("hid-remap-hook-worker".to_string())
+        .spawn(move || {
+            unsafe {
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
+                let tid = GetCurrentThreadId();
+                if let Ok(mut guard) = HOOK_THREAD_ID.lock() {
+                    *guard = tid;
+                }
+
+                let hook = SetWindowsHookExW(
+                    WH_KEYBOARD_LL,
+                    Some(low_level_keyboard_proc),
+                    std::ptr::null_mut(),
+                    0,
+                );
+
+                if hook.is_null() {
+                    let _ = tx.send(Err("Failed to install standalone keyboard hook"));
+                    return;
+                }
+
+                if let Ok(mut handle) = HOOK_HANDLE.lock() {
+                    *handle = hook as isize;
+                }
+                info!("Standalone input engine hook installed on dedicated worker thread (TID: {}).", tid);
+                let _ = tx.send(Ok(()));
+
+                // Dedicated, ultra-responsive message pump isolated from Slint GUI & PnP I/O
+                let mut msg: MSG = std::mem::zeroed();
+                while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                    if msg.message == WM_USER_REFRESH_HOOK {
+                        let mut handle = HOOK_HANDLE.lock().unwrap();
+                        let old_hook = *handle as HHOOK;
+                        if !old_hook.is_null() {
+                            UnhookWindowsHookEx(old_hook);
+                            *handle = 0;
+                        }
+                        let new_hook = SetWindowsHookExW(
+                            WH_KEYBOARD_LL,
+                            Some(low_level_keyboard_proc),
+                            std::ptr::null_mut(),
+                            0,
+                        );
+                        *handle = new_hook as isize;
+                        info!("Standalone hook refreshed on worker thread: valid={}", !new_hook.is_null());
+                    }
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+
+                // Cleanup on thread exit
+                let mut handle = HOOK_HANDLE.lock().unwrap();
+                let cur_hook = *handle as HHOOK;
+                if !cur_hook.is_null() {
+                    UnhookWindowsHookEx(cur_hook);
+                    *handle = 0;
+                    info!("Standalone hook uninstalled on thread termination.");
+                }
+            }
+        })
+        .map_err(|_| "Failed to spawn hook worker thread")?;
+
+    match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        Ok(res) => res,
+        Err(_) => Err("Timeout waiting for hook worker thread to initialize"),
+    }
+}
+
+pub fn refresh_hook() {
+    if let Ok(guard) = HOOK_THREAD_ID.lock() {
+        let tid = *guard;
+        if tid != 0 {
+            unsafe {
+                PostThreadMessageW(tid, WM_USER_REFRESH_HOOK, 0, 0);
+            }
         }
-        let mut handle = HOOK_HANDLE.lock().unwrap();
-        *handle = hook as isize;
-        info!("Standalone input engine hook installed.");
-        Ok(())
     }
 }
 
 pub fn update_engine_config(config: AppConfig, connected_ids: &[String]) {
     GLOBAL_ENABLED.store(config.general.enabled, Ordering::Relaxed);
     update_engine_state(config, connected_ids);
+}
+
+fn is_device_id_match(id1: &str, id2: &str) -> bool {
+    if id1.eq_ignore_ascii_case(id2) {
+        return true;
+    }
+    let norm1 = id1.replace('/', "\\").to_uppercase();
+    let norm2 = id2.replace('/', "\\").to_uppercase();
+    if norm1 == norm2 || norm1.contains(&norm2) || norm2.contains(&norm1) {
+        return true;
+    }
+    if let (Some(vid1), Some(pid1)) = hid_remap_device::parse_vid_pid(id1) {
+        if let (Some(vid2), Some(pid2)) = hid_remap_device::parse_vid_pid(id2) {
+            return vid1 == vid2 && pid1 == pid2;
+        }
+    }
+    false
 }
 
 fn update_engine_state(config: AppConfig, connected_ids: &[String]) {
@@ -99,7 +190,7 @@ fn update_engine_state(config: AppConfig, connected_ids: &[String]) {
             config
                 .devices
                 .iter()
-                .filter(|d| connected_ids.iter().any(|cid| cid.eq_ignore_ascii_case(&d.instance_id)))
+                .filter(|d| connected_ids.iter().any(|cid| is_device_id_match(cid, &d.instance_id)))
                 .collect()
         } else {
             config.devices.iter().collect()
@@ -111,6 +202,8 @@ fn update_engine_state(config: AppConfig, connected_ids: &[String]) {
         let active_mode = if all_connected_passthrough {
             LayoutMode::Passthrough
         } else if let Some(dev) = connected_devs.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
+            dev.layout_mode
+        } else if let Some(dev) = config.devices.iter().find(|d| d.layout_mode != LayoutMode::Passthrough) {
             dev.layout_mode
         } else {
             config.general.default_layout_mode
@@ -151,6 +244,14 @@ fn update_engine_state(config: AppConfig, connected_ids: &[String]) {
 }
 
 pub fn stop_standalone_engine() {
+    if let Ok(guard) = HOOK_THREAD_ID.lock() {
+        let tid = *guard;
+        if tid != 0 {
+            unsafe {
+                PostThreadMessageW(tid, WM_QUIT, 0, 0);
+            }
+        }
+    }
     unsafe {
         let mut handle = HOOK_HANDLE.lock().unwrap();
         let hook = *handle as HHOOK;
@@ -266,6 +367,45 @@ fn send_synthetic_events(events: &[KeyEvent]) {
     }
 }
 
+#[inline]
+fn sync_engine_modifiers_with_hardware(modifiers: &mut hid_remap_core::keyboard::ModifierState) {
+    unsafe {
+        let is_ctrl = (GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000) != 0;
+        let is_alt = (GetAsyncKeyState(VK_MENU as i32) as u16 & 0x8000) != 0;
+        let is_lwin = (GetAsyncKeyState(VK_LWIN as i32) as u16 & 0x8000) != 0;
+        let is_rwin = (GetAsyncKeyState(VK_RWIN as i32) as u16 & 0x8000) != 0;
+        let is_shift = (GetAsyncKeyState(VK_SHIFT as i32) as u16 & 0x8000) != 0;
+
+        // If OS physical state says modifier is NOT pressed, clear it immediately
+        if !is_ctrl {
+            modifiers.lctrl = false;
+            modifiers.rctrl = false;
+        }
+        if !is_alt {
+            modifiers.lalt = false;
+            modifiers.ralt = false;
+        }
+        if !is_lwin {
+            modifiers.lwin = false;
+        }
+        if !is_rwin {
+            modifiers.rwin = false;
+        }
+        if !is_shift {
+            modifiers.lshift = false;
+            modifiers.rshift = false;
+        } else if !modifiers.is_shift() {
+            // Hardware Shift is physically pressed, but engine hadn't recorded it yet
+            let is_rshift = (GetAsyncKeyState(VK_RSHIFT as i32) as u16 & 0x8000) != 0;
+            if is_rshift {
+                modifiers.rshift = true;
+            } else {
+                modifiers.lshift = true;
+            }
+        }
+    }
+}
+
 unsafe extern "system" fn low_level_keyboard_proc(
     n_code: i32,
     w_param: WPARAM,
@@ -317,10 +457,6 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
                 if let Ok(mut guard) = ENGINE_STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if is_down {
-                            std::thread::yield_now();
-                        }
-
                         let active_id = if is_down {
                             let cur_id = get_last_typed_device();
                             if let Some(ref id) = cur_id {
@@ -338,11 +474,8 @@ unsafe extern "system" fn low_level_keyboard_proc(
                             if engines.contains_key(&upper) {
                                 return Some(upper);
                             }
-                            if let (Some(vid), Some(pid)) = hid_remap_device::parse_vid_pid(id) {
-                                let tag = format!("VID_{:04X}&PID_{:04X}", vid, pid);
-                                if let Some(key) = engines.keys().find(|k| k.contains(&tag)) {
-                                    return Some(key.clone());
-                                }
+                            if let Some(key) = engines.keys().find(|k| is_device_id_match(k, id)) {
+                                return Some(key.clone());
                             }
                             None
                         };
@@ -380,6 +513,9 @@ unsafe extern "system" fn low_level_keyboard_proc(
                         } else {
                             (&mut state.default_engine, "Default")
                         };
+
+                        // Synchronize modifier states with actual physical hardware before processing!
+                        sync_engine_modifiers_with_hardware(&mut dev_engine.engine.modifiers);
 
                         // 1. Process Ctrl single-tap IME gesture
                         if is_left_ctrl || is_right_ctrl || scan_code == 0x1D {

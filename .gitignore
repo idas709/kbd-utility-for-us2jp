@@ -6,5 +6,6 @@ Cargo.lock
 .idea/
 dist/*.exe
 dist/*.msi
+dist/config.toml
 *.wixpdb
 

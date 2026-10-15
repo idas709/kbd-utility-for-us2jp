@@ -71,8 +71,19 @@ pub fn device_path_to_instance_id(device_path: &str) -> String {
     without_guid.replace('#', r"\")
 }
 
+static REGISTRY_DESC_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Option<String>>>> =
+    std::sync::Mutex::new(None);
+
 /// Query human-readable Device Description or FriendlyName from Windows Enum registry.
 pub fn get_device_description_from_registry(instance_id: &str) -> Option<String> {
+    if let Ok(guard) = REGISTRY_DESC_CACHE.lock() {
+        if let Some(cache) = guard.as_ref() {
+            if let Some(cached) = cache.get(instance_id) {
+                return cached.clone();
+            }
+        }
+    }
+
     let subkey = format!(r"SYSTEM\CurrentControlSet\Enum\{}", instance_id);
     let wide_key: Vec<u16> = std::ffi::OsStr::new(&subkey)
         .encode_wide()
@@ -130,6 +141,12 @@ pub fn get_device_description_from_registry(instance_id: &str) -> Option<String>
         // Try FriendlyName first, then DeviceDesc
         let name = read_string_val("FriendlyName").or_else(|| read_string_val("DeviceDesc"));
         RegCloseKey(hkey);
+
+        if let Ok(mut guard) = REGISTRY_DESC_CACHE.lock() {
+            let cache = guard.get_or_insert_with(std::collections::HashMap::new);
+            cache.insert(instance_id.to_string(), name.clone());
+        }
+
         name
     }
 }

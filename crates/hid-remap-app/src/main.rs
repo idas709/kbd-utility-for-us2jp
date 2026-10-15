@@ -10,7 +10,8 @@ use hid_remap_core::config::{AppConfig, DeviceConfig, LayoutMode};
 use hid_remap_device::{get_keyboard_devices, KeyboardDeviceInfo};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use standalone_engine::{
-    set_activity_callback, start_standalone_engine, stop_standalone_engine, update_engine_config,
+    refresh_hook, set_activity_callback, start_standalone_engine, stop_standalone_engine,
+    update_engine_config,
 };
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -265,6 +266,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 dev_model_pnp.set_vec(items);
                 tray::populate_device_cache();
                 update_engine_config(current_conf, &current_ids);
+                refresh_hook();
             }
         },
     );

@@ -90,6 +90,10 @@ fn resolve_device_instance_id(h_device: HANDLE) -> Option<String> {
 }
 
 const WM_TRAY_CALLBACK: u32 = WM_USER + 100;
+const WM_POWERBROADCAST: u32 = 0x0218;
+const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
+const PBT_APMRESUMESUSPEND: usize = 0x0007;
+
 const ID_OPEN: usize = 1001;
 const ID_TOGGLE: usize = 1002;
 const ID_STARTUP: usize = 1003;
@@ -265,6 +269,14 @@ unsafe extern "system" fn tray_wnd_proc(
                 }
             }
             DefWindowProcW(hwnd, msg, w_param, l_param)
+        }
+        WM_POWERBROADCAST => {
+            let pbt = w_param as usize;
+            if pbt == PBT_APMRESUMEAUTOMATIC || pbt == PBT_APMRESUMESUSPEND {
+                info!("Power resume event detected ({:#x}). Re-anchoring keyboard hook...", pbt);
+                crate::standalone_engine::refresh_hook();
+            }
+            1
         }
         WM_DESTROY => {
             PostQuitMessage(0);
