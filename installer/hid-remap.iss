@@ -2,7 +2,7 @@
 ; Professional Windows Installer with Japanese/English support
 
 #define MyAppName "HID Keyboard Layout Remapper"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.1"
 #define MyAppPublisher "HID Remap Project"
 #define MyAppURL "https://github.com/idas709/kbd-utility-for-us2jp"
 #define MyAppExeName "hid-remap.exe"

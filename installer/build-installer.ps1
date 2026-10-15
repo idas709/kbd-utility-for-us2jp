@@ -73,9 +73,15 @@ if ($WixPath) {
     # Add UI extension globally if missing
     & $WixPath extension add WixToolset.UI.wixext -g 2>$null | Out-Null
 
+    $CargoToml = Get-Content (Join-Path $WorkspaceRoot "Cargo.toml") -Raw
+    $AppVersion = "0.1.1"
+    if ($CargoToml -match 'version\s*=\s*"([^"]+)"') {
+        $AppVersion = $matches[1]
+    }
+
     # Build Japanese MSI (Default)
     $MsiOutput = Join-Path $DistDir "hid-remap-setup.msi"
-    $MsiOutputVersioned = Join-Path $DistDir "hid-remap-setup-v0.1.0.msi"
+    $MsiOutputVersioned = Join-Path $DistDir "hid-remap-setup-v${AppVersion}.msi"
     $MsiOutputEn = Join-Path $DistDir "hid-remap-setup-en.msi"
 
     Set-Location $WorkspaceRoot

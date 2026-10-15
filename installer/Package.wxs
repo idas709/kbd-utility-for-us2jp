@@ -2,7 +2,7 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
     <Package Name="HID Keyboard Layout Remapper"
              Manufacturer="HID Remap Project"
-             Version="0.1.0"
+             Version="0.1.1"
              UpgradeCode="8B321D50-0A16-417A-B962-E9C59B7F1D02"
              Scope="perMachineOrUser">
         <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeErrorMessage)" />
