@@ -201,6 +201,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let main_window = MainWindow::new()?;
+    let _ = main_window.hide();
 
     // Populate initial device list
     let scanned_devices = get_keyboard_devices(&config.borrow());
@@ -534,6 +535,14 @@ fn main() -> Result<(), slint::PlatformError> {
                         title.as_ptr(),
                     );
                     if !hwnd.is_null() {
+                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                            hwnd,
+                            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW,
+                        );
+                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                            hwnd,
+                            windows_sys::Win32::UI::WindowsAndMessaging::SW_RESTORE,
+                        );
                         windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
                     }
                 }
@@ -572,12 +581,35 @@ fn main() -> Result<(), slint::PlatformError> {
     );
     tray::populate_device_cache();
 
-    // Check launch arguments: if --show is passed, show settings window on start!
+    // Check launch arguments: start hidden in system tray unless --show is explicitly given
     let args: Vec<String> = std::env::args().collect();
     let start_shown = args.iter().any(|a| a == "--show" || a == "-s");
 
     if start_shown {
-        main_window.show()?;
+        let _ = main_window.show();
+    } else {
+        let _ = main_window.hide();
+        // Also ensure window is hidden right after event loop startup
+        let weak_init = main_window.as_weak();
+        slint::Timer::single_shot(Duration::from_millis(15), move || {
+            if let Some(win) = weak_init.upgrade() {
+                let _ = win.hide();
+                unsafe {
+                    let title = to_wide("HID Keyboard Layout Remapper (Standalone)");
+                    let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
+                        std::ptr::null(),
+                        title.as_ptr(),
+                    );
+                    if !hwnd.is_null() {
+                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                            hwnd,
+                            windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE,
+                        );
+                    }
+                }
+                info!("Application started resident in system tray (window hidden).");
+            }
+        });
     }
 
     info!("Application resident in system tray. Starting persistent event loop...");
